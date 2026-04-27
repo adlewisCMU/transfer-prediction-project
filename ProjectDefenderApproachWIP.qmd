@@ -1,7 +1,14 @@
 ---
-title: "Sports Analytics Final Project"
+title: "Alex's Defender Metric Approach"
 author: "Alex Lewis"
-format: pdf
+format:
+  pdf:
+    documentclass: article
+    fontsize: 11pt
+    geometry:
+      - margin=1in
+    toc: false
+    number-sections: true
 ---
 
 ```{r setup, include=FALSE}
@@ -10,13 +17,13 @@ knitr::opts_chunk$set(echo = FALSE)
 
 ```{r}
 #| message: false
+#| warning: false
 library(ggplot2)
 library(dplyr)
 library(tidyverse)
-library(scales)
 library(stringr)
 library(lme4)
-library(splines)
+library(patchwork)
 
 soccer_data <- read_csv("project_data/combined_seasons.csv")
 soccer_data$`Avg Mins per Match` <- soccer_data$`Avg Mins per Match` / 
@@ -327,11 +334,6 @@ anova(m_squad_re, m_player_squad_re)
 ```
 
 ```{r}
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(lme4)
-
 m_int <- lmer(
   `Interceptions per 90` ~
     age +
@@ -391,56 +393,38 @@ ball_winning <- expand.grid(
 )
 
 ball_playing <- expand.grid(
- age = mean(defenders$age),
-
- `Interceptions per 90`=
- quantile(defenders$`Interceptions per 90`,.25),
-
- `Dribble Tackle Success %`=
- quantile(defenders$`Dribble Tackle Success %`,.25),
-
- `Aerial Duel Win %`=
- quantile(defenders$`Aerial Duel Win %`,.25),
-
- `Pass Completion %`=
- quantile(defenders$`Pass Completion %`,.75),
-
- `Key Passes per 90`=
- quantile(defenders$`Key Passes per 90`,.75),
-
- `Progressive Pass Distance per 90`=
- quantile(defenders$`Progressive Pass Distance per 90`,.75),
-
- comp=unique(defenders$comp)
+  age = mean(defenders$age),
+  `Interceptions per 90` = quantile(defenders$`Interceptions per 90`,.25),
+  `Dribble Tackle Success %` = quantile(defenders$`Dribble Tackle Success %`,.25),
+  `Aerial Duel Win %` = quantile(defenders$`Aerial Duel Win %`,.25),
+  `Pass Completion %` = quantile(defenders$`Pass Completion %`,.75),
+  `Key Passes per 90`= quantile(defenders$`Key Passes per 90`,.75),
+  `Progressive Pass Distance per 90` = quantile(defenders$`Progressive Pass Distance per 90`,.75),
+  comp=unique(defenders$comp)
 )
 
-#-----------------------------
-# Predict using mixed models
-#-----------------------------
-
-predict_archetype <- function(df,label){
-
+predict_archetype <- function(df,label) {
  df %>%
- mutate(
-   int_pred = predict(m_int,newdata=.,re.form=NA),
-   key_pred = predict(m_key,newdata=.,re.form=NA),
-   aerial_pred = predict(m_aerial,newdata=.,re.form=NA),
-   prog_pred = predict(m_prog,newdata=.,re.form=NA),
-   archetype = label
- ) %>%
- select(
-   archetype,
-   comp,
-   int_pred,
-   key_pred,
-   aerial_pred,
-   prog_pred
- ) %>%
- pivot_longer(
-  cols=-c(archetype,comp),
-  names_to="metric",
-  values_to="prediction"
- )
+   mutate(
+     int_pred = predict(m_int,newdata=.,re.form=NA),
+     key_pred = predict(m_key,newdata=.,re.form=NA),
+     aerial_pred = predict(m_aerial,newdata=.,re.form=NA),
+     prog_pred = predict(m_prog,newdata=.,re.form=NA),
+     archetype = label
+   ) %>%
+   select(
+     archetype,
+     comp,
+     int_pred,
+     key_pred,
+     aerial_pred,
+     prog_pred
+   ) %>%
+   pivot_longer(
+     cols=-c(archetype,comp),
+     names_to="metric",
+     values_to="prediction"
+   )
 }
 
 preds <- bind_rows(
@@ -454,38 +438,57 @@ preds <- bind_rows(
  )
 )
 
-# standardize within metric for comparability
 preds <- preds %>%
- group_by(metric) %>%
- mutate(z=as.numeric(scale(prediction))) %>%
- ungroup()
+  group_by(metric) %>%
+  mutate(z = as.numeric(scale(prediction))) %>%
+  ungroup()
 
-#-----------------------------
-# Visual
-#-----------------------------
-
-ggplot(
-   preds,
-   aes(metric,comp,fill=z)
-  )+
+ggplot(preds, aes(metric,comp,fill=z)) +
   geom_tile(color="white")+
-  geom_text(
-   aes(label=round(z,2)),
-   color="black"
-  )+
+  geom_text(aes(label=round(z,2)), color="black") +
   facet_wrap(~archetype) +
-  scale_fill_gradient2(
-   low="firebrick3",
-   mid="white",
-   high="goldenrod2",
-   midpoint=0
-  )+
+  scale_fill_gradient2(low="firebrick3", mid="white", high="goldenrod2", midpoint=0) +
   labs(
-   title="Mixed-Model Predicted League Suitability by Defender Archetype",
-   x="Performance Dimension",
-   y="League"
-  )+
+    title = "Mixed-Model Predicted League Suitability by Defender Archetype",
+    x = "Performance Dimension",
+    y = "League"
+  ) +
   theme_minimal()
+```
+
+```{r}
+player_re <- ranef(m_int)$player %>%
+  as.data.frame() %>%
+  rename(effect = `(Intercept)`)
+
+squad_re <- ranef(m_int)$squad %>%
+  as.data.frame() %>%
+  rename(effect = `(Intercept)`)
+
+p_player <- ggplot(player_re, aes(x = effect)) +
+  geom_histogram(bins = 30, color = "white") +
+  scale_y_continuous(breaks = function(x) seq(0, ceiling(max(x)), by = 20)) +
+  labs(
+    title = "Player Random Effects",
+    x = "Random Intercept",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+p_squad <- ggplot(squad_re, aes(x = effect)) +
+  geom_histogram(bins = 15, color = "white") +
+  scale_y_continuous(breaks = function(x) seq(0, ceiling(max(x)), by = 2)) +
+  labs(
+    title = "Squad Random Effects",
+    x = "Random Intercept",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+p_player + p_squad +
+  plot_annotation(
+    title = "Distribution of Random Effects from Interceptions Model"
+  )
 ```
 
 ```{r}
@@ -537,28 +540,28 @@ ci_int <- make_boot_table(
   m_int,
   newdata_all,
   "Interceptions per 90",
-  nsim = 1000
+  nsim = 500
 )
 
 ci_key <- make_boot_table(
   m_key,
   newdata_all,
   "Key Passes per 90",
-  nsim = 1000
+  nsim = 500
 )
 
 ci_aerial <- make_boot_table(
   m_aerial,
   newdata_all,
   "Aerial Duel Win %",
-  nsim = 1000
+  nsim = 500
 )
 
 ci_prog <- make_boot_table(
   m_prog,
   newdata_all,
   "Progressive Pass Distance per 90",
-  nsim = 1000
+  nsim = 500
 )
 
 uncertainty_table <- bind_rows(ci_int, ci_key, ci_aerial, ci_prog) %>%
