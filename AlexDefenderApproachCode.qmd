@@ -64,14 +64,15 @@ soccer_data <- soccer_data %>%
            "es La Liga"         = "La Liga",
            "fr Ligue 1"         = "Ligue 1",
            "it Serie A"         = "Serie A"
-         ))
+         )) %>%
+  relocate(season, .after = player)
+head(soccer_data)
 soccer_data <- na.omit(soccer_data)
 ```
 
 ```{r}
-gks <- soccer_data %>% filter(str_detect(pos, "GK"))
 outfielders <- soccer_data %>% filter(!str_detect(pos, "GK"))
-outfielders <- outfielders %>% filter(`Total Mins` >= 450)
+outfielders <- outfielders %>% filter(`Total Mins` >= 900)
 defenders <- outfielders %>%
   filter(str_detect(pos, "DF")) %>%
   rename(
@@ -104,6 +105,10 @@ length(unique(defenders$player))
 ```
 
 ```{r}
+nrow(defenders)
+```
+
+```{r}
 defenders %>%
  group_by(comp) %>%
  summarise(
@@ -111,119 +116,9 @@ defenders %>%
    mean_tackle = mean(`Dribble Tackle Success %`),
    mean_aerial = mean(`Aerial Duel Win %`),
    mean_key = mean(`Key Passes per 90`),
+   mean_completion = mean(`Pass Completion %`),
    mean_prog = mean(`Progressive Pass Distance per 90`)
  )
-```
-
-```{r}
-m_null <- update(
-  m_int,
-  . ~ . - comp
-)
-
-anova(
-  m_null,
-  m_int
-)
-
-m_age_linear <- lmer(
- `Interceptions per 90` ~
-   age +
-   `Dribble Tackle Success %` +
-   `Aerial Duel Win %` +
-   `Passes Blocked per 90` +
-   comp +
-   (1|player) +
-   (1|squad),
- data=defenders
-)
-
-m_age_quad <- lmer(
- `Interceptions per 90` ~
-   age + I(age^2) +
-   `Dribble Tackle Success %` +
-   `Aerial Duel Win %` +
-   `Passes Blocked per 90` +
-   comp +
-   (1|player) +
-   (1|squad),
- data=defenders
-)
-
-anova(m_age_linear, m_age_quad)
-
-m0 <- lmer(
- `Interceptions per 90` ~
-   age +
-   comp +
-   (1|player) +
-   (1|squad),
- data=defenders
-)
-
-m1 <- lmer(
- `Interceptions per 90` ~
-   age +
-   `Dribble Tackle Success %` +
-   comp +
-   (1|player) +
-   (1|squad),
- data=defenders
-)
-
-m2 <- lmer(
- `Interceptions per 90` ~
-   age +
-   `Dribble Tackle Success %` +
-   `Aerial Duel Win %` +
-   comp +
-   (1|player) +
-   (1|squad),
- data=defenders
-)
-
-m3 <- lmer(
- `Interceptions per 90` ~
-   age +
-   `Dribble Tackle Success %` +
-   `Aerial Duel Win %` +
-   `Passes Blocked per 90` +
-   comp +
-   (1|player) +
-   (1|squad),
- data=defenders
-)
-
-m4 <- lmer(
- `Interceptions per 90` ~
-   age +
-   `Dribble Tackle Success %` +
-   `Aerial Duel Win %` +
-   `Passes Blocked per 90` +
-   `Expected Goals (xG)` +
-   comp +
-   (1|player) +
-   (1|squad),
- data=defenders
-)
-
-AIC(m0,m1,m2,m3,m4)
-anova(m0,m1,m2,m3,m4)
-
-m_fixed_only <- lm(`Interceptions per 90` ~ age + comp, data = defenders)
-
-m_player_re <- lmer(`Interceptions per 90` ~ age + comp + (1|player),
-  data = defenders, REML = FALSE)
-
-m_squad_re <- lmer(`Interceptions per 90` ~ age + comp + (1|squad),
-  data = defenders, REML = FALSE)
-
-m_player_squad_re <- lmer(`Interceptions per 90` ~ age + comp + (1|player) + (1|squad),
-  data = defenders, REML = FALSE)
-
-AIC(m_fixed_only, m_player_re, m_squad_re, m_player_squad_re)
-anova(m_player_re, m_player_squad_re)
-anova(m_squad_re, m_player_squad_re)
 ```
 
 ```{r}
@@ -233,6 +128,7 @@ m_int <- lmer(
     comp * `Dribble Tackle Success %` +
     comp * `Aerial Duel Win %` +
     `Key Passes per 90` +
+    `Pass Completion %` +
     `Progressive Pass Distance per 90` +
     (1|player) + (1|squad),
   data = defenders
@@ -256,6 +152,7 @@ m_aerial <- lmer(
     comp * `Interceptions per 90` +
     comp * `Dribble Tackle Success %` +
     `Key Passes per 90` +
+    `Pass Completion %` +
     `Progressive Pass Distance per 90` +
     (1|player) + (1|squad),
   data = defenders
@@ -273,6 +170,29 @@ m_prog <- lmer(
   data = defenders
 )
 
+m_pass <- lmer(
+  `Pass Completion %` ~
+  age +
+  `Interceptions per 90` +
+  `Dribble Tackle Success %` +
+  `Aerial Duel Win %` +
+  comp * `Key Passes per 90` +
+  comp * `Progressive Pass Distance per 90` +
+  (1|player)+(1|squad),
+  data=defenders
+)
+
+m_drib <- lmer(
+  `Dribble Tackle Success %` ~
+  age +
+  comp * `Interceptions per 90` +
+  comp * `Aerial Duel Win %` +
+  `Key Passes per 90` +
+  `Pass Completion %` +
+  `Progressive Pass Distance per 90` +
+  (1|player)+(1|squad),
+  data=defenders
+)
 
 ball_winning <- expand.grid(
   age = mean(defenders$age),
@@ -303,14 +223,18 @@ predict_archetype <- function(df,label) {
      key_pred = predict(m_key,newdata=.,re.form=NA),
      aerial_pred = predict(m_aerial,newdata=.,re.form=NA),
      prog_pred = predict(m_prog,newdata=.,re.form=NA),
+     drib_pred = predict(m_drib,newdata=.,re.form=NA),
+     pass_pred = predict(m_pass,newdata=.,re.form=NA),
      archetype = label
    ) %>%
    select(
      archetype,
      comp,
      int_pred,
-     key_pred,
+     drib_pred,
      aerial_pred,
+     pass_pred,
+     key_pred,
      prog_pred
    ) %>%
    pivot_longer(
@@ -321,14 +245,8 @@ predict_archetype <- function(df,label) {
 }
 
 preds <- bind_rows(
- predict_archetype(
-   ball_winning,
-   "Ball-Winning"
- ),
- predict_archetype(
-   ball_playing,
-   "Ball-Playing"
- )
+  predict_archetype(ball_winning, "Ball-Winning"),
+  predict_archetype(ball_playing, "Ball-Playing")
 )
 
 preds <- preds %>%
@@ -337,16 +255,40 @@ preds <- preds %>%
   ungroup()
 
 ggplot(preds, aes(metric,comp,fill=z)) +
-  geom_tile(color="white")+
+  geom_tile(color="white") +
   geom_text(aes(label=round(z,2)), color="black") +
   facet_wrap(~archetype) +
   scale_fill_gradient2(low="firebrick3", mid="white", high="goldenrod2", midpoint=0) +
+  scale_x_discrete(
+    labels = c(
+      int_pred = "Interceptions",
+      drib_pred = "Tackle\nSuccess %",
+      aerial_pred = "Aerial\nWin %",
+      pass_pred = "Pass\nCompletion %",
+      key_pred = "Key Passes",
+      prog_pred = "Passing\nDistance"
+    )
+  ) +
   labs(
     title = "Mixed-Model Predicted League Suitability by Defender Archetype",
     x = "Performance Dimension",
-    y = "League"
+    y = "League",
+    fill = "Relative\nSuitability\n(within metric)"
   ) +
-  theme_minimal()
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      size = 9
+    ),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 11),
+    plot.title = element_text(size = 13),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9),
+    panel.spacing = unit(2,"lines")
+  )
 ```
 
 ```{r}
@@ -379,9 +321,7 @@ p_squad <- ggplot(squad_re, aes(x = effect)) +
   theme_minimal()
 
 p_player + p_squad +
-  plot_annotation(
-    title = "Distribution of Random Effects from Interceptions Model"
-  )
+  plot_annotation(title = "Distribution of Random Effects from Interceptions Model")
 ```
 
 ```{r}
@@ -429,33 +369,10 @@ make_boot_table <- function(model, newdata, metric_name, nsim = 500) {
 
 set.seed(460)
 
-ci_int <- make_boot_table(
-  m_int,
-  newdata_all,
-  "Interceptions per 90",
-  nsim = 500
-)
-
-ci_key <- make_boot_table(
-  m_key,
-  newdata_all,
-  "Key Passes per 90",
-  nsim = 500
-)
-
-ci_aerial <- make_boot_table(
-  m_aerial,
-  newdata_all,
-  "Aerial Duel Win %",
-  nsim = 500
-)
-
-ci_prog <- make_boot_table(
-  m_prog,
-  newdata_all,
-  "Progressive Pass Distance per 90",
-  nsim = 500
-)
+ci_int <- make_boot_table(m_int, newdata_all, "Interceptions per 90", nsim = 500)
+ci_key <- make_boot_table(m_key, newdata_all, "Key Passes per 90", nsim = 500)
+ci_aerial <- make_boot_table(m_aerial, newdata_all, "Aerial Duel Win %", nsim = 500)
+ci_prog <- make_boot_table(m_prog, newdata_all, "Progressive Pass Distance per 90", nsim = 500)
 
 uncertainty_table <- bind_rows(ci_int, ci_key, ci_aerial, ci_prog) %>%
   arrange(archetype, metric, comp) %>%
@@ -467,4 +384,57 @@ uncertainty_table <- bind_rows(ci_int, ci_key, ci_aerial, ci_prog) %>%
   )
 uncertainty_table %>%
   select(archetype, comp, metric, ci)
+```
+
+```{r}
+m_age_quad <- update(
+  m_int,
+  . ~ . + I(age^2)
+)
+
+anova(m_int, m_age_quad)
+```
+```{r}
+#| warning: false
+m_fixed_only <- lm(
+  `Interceptions per 90` ~
+    age +
+    comp * `Dribble Tackle Success %` +
+    comp * `Aerial Duel Win %` +
+    `Key Passes per 90` +
+    `Pass Completion %` +
+    `Progressive Pass Distance per 90`,
+  data = defenders,
+  REML = FALSE
+)
+
+m_player_only <- lmer(
+  `Interceptions per 90` ~
+    age +
+    comp * `Dribble Tackle Success %` +
+    comp * `Aerial Duel Win %` +
+    `Key Passes per 90` +
+    `Pass Completion %` +
+    `Progressive Pass Distance per 90` +
+    (1|player),
+  data = defenders,
+  REML = FALSE
+)
+
+m_squad_only <- lmer(
+  `Interceptions per 90` ~
+    age +
+    comp * `Dribble Tackle Success %` +
+    comp * `Aerial Duel Win %` +
+    `Key Passes per 90` +
+    `Pass Completion %` +
+    `Progressive Pass Distance per 90` +
+    (1|squad),
+  data = defenders,
+  REML = FALSE
+)
+
+m_player_squad <- update(m_int, REML = FALSE)
+
+AIC(m_fixed_only, m_player_only, m_squad_only, m_player_squad)
 ```
