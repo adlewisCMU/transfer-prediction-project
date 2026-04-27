@@ -74,9 +74,11 @@ defenders <- outfielders %>%
     `Interceptions per 90` = Interceptions / `Total Mins` * 90,
     `Progressive Pass Distance per 90` = `Progressive Pass Distance` / `Total Mins` * 90,
     `Passes Blocked per 90` =
-      `Passes Blocked` / `Total Mins` * 90
+      `Passes Blocked` / `Total Mins` * 90,
+    `Key Passes per 90` = `Key Passes` / `Total Mins` * 90
   ) %>%
   select(
+    -`Crosses Stopped`,
     -`Non-Penalty xG`,
     -carries_prgc,
     -`Goals Against`,
@@ -87,7 +89,6 @@ defenders <- outfielders %>%
     -`% Clean sheets`,
     -`% Penalty saves`
   )
-colnames(defenders)
 ```
 
 
@@ -95,278 +96,123 @@ colnames(defenders)
 length(unique(defenders$player))
 ```
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ```{r}
-defender_stats <- c(
-  # defensive
-  "Tackles Attempted",
-  "Tackles Won",
-  "Dribble Tackle Success %",
-  "Shots Blocked",
-  "Passes Blocked",
-  "Interceptions",
-  "Clearances",
-  "Errors made",
-  "Aerial Duel Win %",
-  "Crosses Stopped",
-  "Touches in Defensive Penalty Area",
-  
-  # ball-playing / possession
-  "Pass Completion %",
-  "Progressive Pass Distance",
-  "Progressive Passes",
-  "Passes into Final Third",
-  "Passes into Penalty Area",
-  "Progressive Carries",
-  "Carries into Final Third",
-  "Carries into Penalty Area",
-  "Possessions Lost",
-  
-  # attacking contribution
-  "Goals per 90",
-  "Assists per 90",
-  "Expected Goals (xG)",
-  "Shots per 90",
-  "Shot Creating Actions per 90",
-  "Goal Creating Actions per 90"
-)
-
-df_stints <- defenders %>%
-  arrange(player, season) %>%
-  group_by(player) %>%
-  mutate(
-    player_stint_id = cumsum(comp != lag(comp, default = first(comp)))
-  ) %>%
-  group_by(player, player_stint_id, comp) %>%
-  summarise(
-    seasons    = n(),
-    total_mins = sum(`Total Mins`, na.rm = TRUE),
-    avg_age    = mean(age, na.rm = TRUE),
-
-    across(
-      all_of(defender_stats),
-      ~ mean(.x, na.rm = TRUE)
-    ),
-
-    .groups = "drop"
-  ) %>%
-  filter(total_mins >= 450) %>%
-  group_by(player) %>%
-  filter(n() >= 2) %>%
-  ungroup()
-
-df_transfers <- df_stints %>%
-  arrange(player, player_stint_id) %>%
-  group_by(player) %>%
-  mutate(
-    from_league = lag(comp),
-    to_league   = comp,
-    from_id     = lag(player_stint_id)
-  ) %>%
-  ungroup() %>%
-  filter(
-    !is.na(from_league),
-    from_league != to_league
-  )
-
-df_stints_pre <- df_stints %>%
-  select(
-    player,
-    player_stint_id,
-    seasons,
-    total_mins,
-    all_of(defender_stats)
-  ) %>%
-  rename(
-    seasons_pre = seasons,
-    total_mins_pre = total_mins
-  ) %>%
-  rename_with(
-    ~ paste0(.x, "_pre"),
-    all_of(defender_stats)
-  )
-
-df_stints_post <- df_stints %>%
-  select(
-    player,
-    player_stint_id,
-    seasons,
-    total_mins,
-    all_of(defender_stats)
-  ) %>%
-  rename(
-    seasons_post = seasons,
-    total_mins_post = total_mins
-  ) %>%
-  rename_with(
-    ~ paste0(.x, "_post"),
-    all_of(defender_stats)
-  )
-
-df_transfer_events <- df_transfers %>%
-  left_join(
-    df_stints_pre, by = c("player", "from_id" = "player_stint_id")) %>%
-  left_join(
-    df_stints_post, by = c("player", "player_stint_id")
-  )
-
-for (stat in defender_stats) {
-  pre_col  <- paste0(stat, "_pre")
-  post_col <- paste0(stat, "_post")
-  if (
-    pre_col %in% names(df_transfer_events) &
-    post_col %in% names(df_transfer_events)
-  ) {
-    df_transfer_events[[paste0(stat, "_delta")]] <-
-      df_transfer_events[[post_col]] -
-      df_transfer_events[[pre_col]]
-  }
-}
-
-df_transfer_events <- df_transfer_events %>%
-  select(
-    player,
-    from_league,
-    to_league,
-    avg_age,
-    seasons_pre,
-    seasons_post,
-    total_mins_pre,
-    total_mins_post,
-    ends_with("_pre"),
-    ends_with("_post"),
-    ends_with("_delta")
-  )
-
-delta_cols <- grep("_delta$", names(df_transfer_events), value = TRUE)
-
-df_transfer_events <- df_transfer_events %>%
-  mutate(
-    across(
-      all_of(delta_cols),
-      ~ as.numeric(scale(.x)),
-      .names = "{.col}_z"
-    )
-  )
+defenders %>%
+ group_by(comp) %>%
+ summarise(
+   mean_int = mean(`Interceptions per 90`),
+   mean_tackle = mean(`Dribble Tackle Success %`),
+   mean_aerial = mean(`Aerial Duel Win %`),
+   mean_key = mean(`Key Passes per 90`),
+   mean_prog = mean(`Progressive Pass Distance per 90`)
+ )
 ```
 
 ```{r}
-df_transfer_events %>%
-  count(from_league, to_league) %>%
-  ggplot(aes(from_league,to_league,fill=n)) +
-  geom_tile() +
-  geom_text(aes(label=n), color = "white", size = 5) +
-  scale_fill_gradient() +
-  labs(
-    title="Observed Defender Transfers 2020-2025",
-    x="Origin League",
-    y="Destination League"
-  ) +
-  theme_minimal()
-```
-
-```{r}
-m_int <- lmer(`Interceptions per 90` ~ age + `Dribble Tackle Success %` +
-   `Aerial Duel Win %` + comp + (1|player) + (1|squad), data=defenders)
-summary(m_int)
-
-m_key <- lmer(
-  `Key Passes per 90` ~ age +
-    `Pass Completion %` +
-    `Progressive Pass Distance per 90` +
-    comp +
-    (1|player) + (1|squad),
-  data = defenders
-)
-
-m_aerial <- lmer(
-  `Aerial Duel Win %` ~ age +
-    `Interceptions per 90` +
-    `Passes Blocked per 90` +
-    comp +
-    (1|player) + (1|squad),
-  data = defenders
-)
-```
-
-```{r}
-newdat <- expand.grid(
+newdat_key <- expand.grid(
   age = mean(defenders$age),
-  `Dribble Tackle Success %` = mean(defenders$`Dribble Tackle Success %`),
-  `Aerial Duel Win %` = mean(defenders$`Aerial Duel Win %`),
+  `Pass Completion %` = mean(defenders$`Pass Completion %`),
+  `Progressive Pass Distance per 90` =
+    mean(defenders$`Progressive Pass Distance per 90`),
   comp = unique(defenders$comp)
 )
 
-newdat$pred <- predict(m_int, newdata = newdat, re.form = NA)
-print(newdat)
+newdat_key$pred <- predict(m_key, newdata = newdat_key, re.form = NA)
+print(newdat_key)
 
-deltas <- expand_grid(
-  from_league = newdat$comp,
-  to_league = newdat$comp
+deltas_key <- expand_grid(
+  from_league = newdat_key$comp,
+  to_league = newdat_key$comp
 ) %>%
   left_join(
-    newdat %>% select(comp,pred),
+    newdat_key %>% select(comp,pred),
     by = c("from_league"="comp")
   ) %>%
   rename(pred_from = pred) %>%
   left_join(
-    newdat %>% select(comp,pred),
+    newdat_key %>% select(comp,pred),
     by = c("to_league"="comp")
   ) %>%
   rename(pred_to = pred) %>%
-  mutate(
-    delta = pred_to - pred_from
-  )
+  mutate(delta = pred_to - pred_from)
 
 ggplot(
-  deltas,
+  deltas_key,
   aes(from_league,to_league,fill=delta)
 ) +
-  geom_tile() +
-  geom_text(aes(label=round(delta,2)),
-            color="white",
-            size=5) +
-  scale_fill_gradient2() +
+  geom_tile(color = "white") +
+  geom_text(
+    aes(label = round(delta,2)),
+    color = "black",
+    size = 5
+  ) +
+  scale_fill_gradient2(
+    low = "steelblue4",
+    mid = "white",
+    high = "firebrick3",
+    midpoint = 0
+  ) +
   labs(
-    title="Predicted Change in Interceptions per 90 After League Switch",
-    x="Origin League",
-    y="Destination League"
+    title = "Predicted Change in Key Passes per 90 After League Switch",
+    x = "Origin League",
+    y = "Destination League"
   ) +
   theme_minimal()
 
-VarCorr(m_int)
+VarCorr(m_key)
+```
+
+```{r}
+newdat_aerial <- expand.grid(
+  age = mean(defenders$age),
+  `Interceptions per 90` = mean(defenders$`Interceptions per 90`),
+  `Passes Blocked per 90` = mean(defenders$`Passes Blocked per 90`),
+  comp = unique(defenders$comp)
+)
+
+newdat_aerial$pred <- predict(m_aerial, newdata = newdat_aerial, re.form = NA)
+print(newdat_aerial)
+
+deltas_aerial <- expand_grid(
+  from_league = newdat_aerial$comp,
+  to_league = newdat_aerial$comp
+) %>%
+  left_join(
+    newdat_aerial %>% select(comp,pred),
+    by = c("from_league"="comp")
+  ) %>%
+  rename(pred_from = pred) %>%
+  left_join(
+    newdat_aerial %>% select(comp,pred),
+    by = c("to_league"="comp")
+  ) %>%
+  rename(pred_to = pred) %>%
+  mutate(delta = pred_to - pred_from)
+
+ggplot(
+  deltas_aerial,
+  aes(from_league,to_league,fill=delta)
+) +
+  geom_tile(color = "white") +
+  geom_text(
+    aes(label = round(delta,2)),
+    color = "black",
+    size = 5
+  ) +
+  scale_fill_gradient2(
+    low = "steelblue4",
+    mid = "white",
+    high = "firebrick3",
+    midpoint = 0
+  ) +
+  labs(
+    title = "Predicted Change in Aerial Duel Win % After League Switch",
+    x = "Origin League",
+    y = "Destination League"
+  ) +
+  theme_minimal()
+
+VarCorr(m_aerial)
 ```
 
 ```{r}
@@ -464,51 +310,265 @@ m4 <- lmer(
 AIC(m0,m1,m2,m3,m4)
 anova(m0,m1,m2,m3,m4)
 
-m_fixed_only <- lm(
-`Interceptions per 90` ~ age +
-`Dribble Tackle Success %` +
-`Aerial Duel Win %` +
-`Passes Blocked per 90` +
-comp,
-data = defenders
-)
+m_fixed_only <- lm(`Interceptions per 90` ~ age + comp, data = defenders)
 
-m_player_re <- lmer(
-`Interceptions per 90` ~ age +
-`Dribble Tackle Success %` +
-`Aerial Duel Win %` +
-`Passes Blocked per 90` +
-comp +
-(1|player),
-data = defenders,
-REML = FALSE
-)
+m_player_re <- lmer(`Interceptions per 90` ~ age + comp + (1|player),
+  data = defenders, REML = FALSE)
 
-m_squad_re <- lmer(
-`Interceptions per 90` ~ age +
-`Dribble Tackle Success %` +
-`Aerial Duel Win %` +
-`Passes Blocked per 90` +
-comp +
-(1|squad),
-data = defenders,
-REML = FALSE
-)
+m_squad_re <- lmer(`Interceptions per 90` ~ age + comp + (1|squad),
+  data = defenders, REML = FALSE)
 
-m_player_squad_re <- lmer(
-`Interceptions per 90` ~ age +
-`Dribble Tackle Success %` +
-`Aerial Duel Win %` +
-`Passes Blocked per 90` +
-comp +
-(1|player) + (1|squad),
-data = defenders,
-REML = FALSE
-)
+m_player_squad_re <- lmer(`Interceptions per 90` ~ age + comp + (1|player) + (1|squad),
+  data = defenders, REML = FALSE)
 
 AIC(m_fixed_only, m_player_re, m_squad_re, m_player_squad_re)
 anova(m_player_re, m_player_squad_re)
 anova(m_squad_re, m_player_squad_re)
 ```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lme4)
+
+m_int <- lmer(
+  `Interceptions per 90` ~
+    age +
+    comp * `Dribble Tackle Success %` +
+    comp * `Aerial Duel Win %` +
+    `Key Passes per 90` +
+    `Progressive Pass Distance per 90` +
+    (1|player) + (1|squad),
+  data = defenders
+)
+
+m_key <- lmer(
+  `Key Passes per 90` ~
+    age +
+    `Interceptions per 90` +
+    `Dribble Tackle Success %` +
+    `Aerial Duel Win %` +
+    comp * `Pass Completion %` +
+    comp * `Progressive Pass Distance per 90` +
+    (1|player) + (1|squad),
+  data = defenders
+)
+
+m_aerial <- lmer(
+  `Aerial Duel Win %` ~
+    age +
+    comp * `Interceptions per 90` +
+    comp * `Dribble Tackle Success %` +
+    `Key Passes per 90` +
+    `Progressive Pass Distance per 90` +
+    (1|player) + (1|squad),
+  data = defenders
+)
+
+m_prog <- lmer(
+  `Progressive Pass Distance per 90` ~
+    age +
+    `Interceptions per 90` +
+    `Dribble Tackle Success %` +
+    `Aerial Duel Win %` +
+    comp * `Pass Completion %` +
+    comp * `Key Passes per 90` +
+    (1|player) + (1|squad),
+  data = defenders
+)
+
+
+ball_winning <- expand.grid(
+  age = mean(defenders$age),
+  `Interceptions per 90` = quantile(defenders$`Interceptions per 90`,.75),
+  `Dribble Tackle Success %` = quantile(defenders$`Dribble Tackle Success %`,.75),
+  `Aerial Duel Win %` = quantile(defenders$`Aerial Duel Win %`,.75),
+  `Pass Completion %` = quantile(defenders$`Pass Completion %`,.25),
+  `Key Passes per 90` = quantile(defenders$`Key Passes per 90`,.25),
+  `Progressive Pass Distance per 90` = quantile(defenders$`Progressive Pass Distance per 90`,.25),
+  comp=unique(defenders$comp)
+)
+
+ball_playing <- expand.grid(
+ age = mean(defenders$age),
+
+ `Interceptions per 90`=
+ quantile(defenders$`Interceptions per 90`,.25),
+
+ `Dribble Tackle Success %`=
+ quantile(defenders$`Dribble Tackle Success %`,.25),
+
+ `Aerial Duel Win %`=
+ quantile(defenders$`Aerial Duel Win %`,.25),
+
+ `Pass Completion %`=
+ quantile(defenders$`Pass Completion %`,.75),
+
+ `Key Passes per 90`=
+ quantile(defenders$`Key Passes per 90`,.75),
+
+ `Progressive Pass Distance per 90`=
+ quantile(defenders$`Progressive Pass Distance per 90`,.75),
+
+ comp=unique(defenders$comp)
+)
+
+#-----------------------------
+# Predict using mixed models
+#-----------------------------
+
+predict_archetype <- function(df,label){
+
+ df %>%
+ mutate(
+   int_pred = predict(m_int,newdata=.,re.form=NA),
+   key_pred = predict(m_key,newdata=.,re.form=NA),
+   aerial_pred = predict(m_aerial,newdata=.,re.form=NA),
+   prog_pred = predict(m_prog,newdata=.,re.form=NA),
+   archetype = label
+ ) %>%
+ select(
+   archetype,
+   comp,
+   int_pred,
+   key_pred,
+   aerial_pred,
+   prog_pred
+ ) %>%
+ pivot_longer(
+  cols=-c(archetype,comp),
+  names_to="metric",
+  values_to="prediction"
+ )
+}
+
+preds <- bind_rows(
+ predict_archetype(
+   ball_winning,
+   "Ball-Winning"
+ ),
+ predict_archetype(
+   ball_playing,
+   "Ball-Playing"
+ )
+)
+
+# standardize within metric for comparability
+preds <- preds %>%
+ group_by(metric) %>%
+ mutate(z=as.numeric(scale(prediction))) %>%
+ ungroup()
+
+#-----------------------------
+# Visual
+#-----------------------------
+
+ggplot(
+   preds,
+   aes(metric,comp,fill=z)
+  )+
+  geom_tile(color="white")+
+  geom_text(
+   aes(label=round(z,2)),
+   color="black"
+  )+
+  facet_wrap(~archetype) +
+  scale_fill_gradient2(
+   low="firebrick3",
+   mid="white",
+   high="goldenrod2",
+   midpoint=0
+  )+
+  labs(
+   title="Mixed-Model Predicted League Suitability by Defender Archetype",
+   x="Performance Dimension",
+   y="League"
+  )+
+  theme_minimal()
 ```
 
+```{r}
+newdata_all <- bind_rows(
+  ball_winning %>% mutate(archetype = "Ball-Winning"),
+  ball_playing %>% mutate(archetype = "Ball-Playing")
+)
+
+make_boot_table <- function(model, newdata, metric_name, nsim = 500) {
+  pred_fun <- function(fit) {
+    predict(fit, newdata = newdata, re.form = NA)
+  }
+  boot_out <- bootMer(
+    model,
+    FUN = pred_fun,
+    nsim = nsim,
+    type = "parametric",
+    use.u = FALSE
+  )
+  boot_df <- as.data.frame(boot_out$t)
+  
+  colnames(boot_df) <- paste(newdata$archetype, newdata$comp, sep = "___")
+  
+  boot_df %>%
+    pivot_longer(
+      cols = everything(),
+      names_to = "cell",
+      values_to = "prediction"
+    ) %>%
+    separate(
+      cell,
+      into = c("archetype", "comp"),
+      sep = "___"
+    ) %>%
+    group_by(archetype, comp) %>%
+    summarise(
+      estimate = mean(prediction),
+      lower_95 = quantile(prediction, 0.025),
+      upper_95 = quantile(prediction, 0.975),
+      .groups = "drop"
+    ) %>%
+    mutate(metric = metric_name) %>%
+    select(archetype, comp, metric, estimate, lower_95, upper_95)
+}
+
+set.seed(460)
+
+ci_int <- make_boot_table(
+  m_int,
+  newdata_all,
+  "Interceptions per 90",
+  nsim = 1000
+)
+
+ci_key <- make_boot_table(
+  m_key,
+  newdata_all,
+  "Key Passes per 90",
+  nsim = 1000
+)
+
+ci_aerial <- make_boot_table(
+  m_aerial,
+  newdata_all,
+  "Aerial Duel Win %",
+  nsim = 1000
+)
+
+ci_prog <- make_boot_table(
+  m_prog,
+  newdata_all,
+  "Progressive Pass Distance per 90",
+  nsim = 1000
+)
+
+uncertainty_table <- bind_rows(ci_int, ci_key, ci_aerial, ci_prog) %>%
+  arrange(archetype, metric, comp) %>%
+  mutate(
+    estimate = round(estimate, 3),
+    lower_95 = round(lower_95, 3),
+    upper_95 = round(upper_95, 3),
+    ci = paste0(estimate, " (", lower_95, ", ", upper_95, ")")
+  )
+uncertainty_table %>%
+  select(archetype, comp, metric, ci)
+```
