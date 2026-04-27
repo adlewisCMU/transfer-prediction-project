@@ -1,0 +1,40 @@
+---
+title: "Metric Translation across Europe’s Top 5 Football Leagues"
+author: "Jeffrey Chen, Christian Emmanuel, Alex Lewis"
+format:
+  pdf:
+    documentclass: article
+    fontsize: 11pt
+    geometry:
+      - margin=1in
+    toc: false
+    number-sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Abstract
+
+# Introduction
+
+*All code is available here: https://github.com/adlewisCMU/transfer-prediction-project/tree/main*
+
+# Data
+
+# Methods (Jeffrey)
+
+# Methods (Christian)
+
+# Methods (Alex)
+
+# Results (Jeffrey)
+
+# Results (Christian)
+
+# Results (Alex)
+
+# Discussion
+
+# Appendix
