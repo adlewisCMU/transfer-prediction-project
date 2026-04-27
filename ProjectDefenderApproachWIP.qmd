@@ -1,0 +1,514 @@
+---
+title: "Sports Analytics Final Project"
+author: "Alex Lewis"
+format: pdf
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r}
+#| message: false
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(scales)
+library(stringr)
+library(lme4)
+library(splines)
+
+soccer_data <- read_csv("project_data/combined_seasons.csv")
+soccer_data$`Avg Mins per Match` <- soccer_data$`Avg Mins per Match` / 
+  soccer_data$`Matches Played`
+soccer_data <- soccer_data %>%
+  mutate(`Total Mins` = `Matches Played` * `Avg Mins per Match`) %>%
+  rename(
+    `Passes into Final Third`      = `1/3`,
+    `Goals per 90`                 = `Goals p 90`,
+    `Assists per 90`               = `Assists p 90`,
+    `Shots per 90`                 = `Shots p 90`,
+    `Expected Goals (xG)`          = `Expected Goals`,
+    `Non-Penalty xG`               = `Exp NPG`,
+    `Shot Creating Actions per 90` = `Shot creating actions p 90`,
+    `Goal Creating Actions per 90` = `Goal creating actions p 90`,
+    `Goals per Shot`               = `Goals per shot`,
+    `Goals per Shot on Target`     = `Goals per shot on target`,
+    `Tackles Attempted`            = `Tackles attempted`,
+    `Shots Blocked`                = `Shots blocked`,
+    `Passes Blocked`               = `Passes blocked`,
+    `Dribble Tackle Success %`     = `% Dribbles tackled`,
+    `Pass Completion %`            = `Pass completion %`,
+    `Key Passes`                   = `Key passes`,
+    `Progressive Pass Distance`    = `Progressive passes distance`,
+    `Passes into Penalty Area`     = `Passes into penalty area`,
+    `Take-Ons Attempted`           = `Take ons attempted`,
+    `Successful Take-On %`         = `% Successful take-ons`,
+    `Carries into Final Third`     = `carries final 3rd`,
+    `Carries into Penalty Area`    = `carries penalty area`,
+    `Possessions Lost`             = `Possessions lost`,
+    `Aerial Duel Win %`            = `% Aerial Duels won`
+  )
+soccer_data <- soccer_data %>%
+  mutate(comp = str_trim(comp),
+         comp = recode(comp,
+           "eng Premier League" = "Premier League",
+           "de Bundesliga"      = "Bundesliga",
+           "es La Liga"         = "La Liga",
+           "fr Ligue 1"         = "Ligue 1",
+           "it Serie A"         = "Serie A"
+         ))
+soccer_data <- na.omit(soccer_data)
+```
+
+```{r}
+gks <- soccer_data %>% filter(str_detect(pos, "GK"))
+outfielders <- soccer_data %>% filter(!str_detect(pos, "GK"))
+outfielders <- outfielders %>% filter(`Total Mins` >= 450)
+defenders <- outfielders %>%
+  filter(str_detect(pos, "DF")) %>%
+  rename(
+    `Touches in Defensive Penalty Area` = touches_def_pen,
+  ) %>%
+  mutate(
+    `Interceptions per 90` = Interceptions / `Total Mins` * 90,
+    `Progressive Pass Distance per 90` = `Progressive Pass Distance` / `Total Mins` * 90,
+    `Passes Blocked per 90` =
+      `Passes Blocked` / `Total Mins` * 90
+  ) %>%
+  select(
+    -`Non-Penalty xG`,
+    -carries_prgc,
+    -`Goals Against`,
+    -`Goals against p 90`,
+    -`Saves`,
+    -`Saves %`,
+    -`Clean Sheets`,
+    -`% Clean sheets`,
+    -`% Penalty saves`
+  )
+colnames(defenders)
+```
+
+
+```{r}
+length(unique(defenders$player))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+defender_stats <- c(
+  # defensive
+  "Tackles Attempted",
+  "Tackles Won",
+  "Dribble Tackle Success %",
+  "Shots Blocked",
+  "Passes Blocked",
+  "Interceptions",
+  "Clearances",
+  "Errors made",
+  "Aerial Duel Win %",
+  "Crosses Stopped",
+  "Touches in Defensive Penalty Area",
+  
+  # ball-playing / possession
+  "Pass Completion %",
+  "Progressive Pass Distance",
+  "Progressive Passes",
+  "Passes into Final Third",
+  "Passes into Penalty Area",
+  "Progressive Carries",
+  "Carries into Final Third",
+  "Carries into Penalty Area",
+  "Possessions Lost",
+  
+  # attacking contribution
+  "Goals per 90",
+  "Assists per 90",
+  "Expected Goals (xG)",
+  "Shots per 90",
+  "Shot Creating Actions per 90",
+  "Goal Creating Actions per 90"
+)
+
+df_stints <- defenders %>%
+  arrange(player, season) %>%
+  group_by(player) %>%
+  mutate(
+    player_stint_id = cumsum(comp != lag(comp, default = first(comp)))
+  ) %>%
+  group_by(player, player_stint_id, comp) %>%
+  summarise(
+    seasons    = n(),
+    total_mins = sum(`Total Mins`, na.rm = TRUE),
+    avg_age    = mean(age, na.rm = TRUE),
+
+    across(
+      all_of(defender_stats),
+      ~ mean(.x, na.rm = TRUE)
+    ),
+
+    .groups = "drop"
+  ) %>%
+  filter(total_mins >= 450) %>%
+  group_by(player) %>%
+  filter(n() >= 2) %>%
+  ungroup()
+
+df_transfers <- df_stints %>%
+  arrange(player, player_stint_id) %>%
+  group_by(player) %>%
+  mutate(
+    from_league = lag(comp),
+    to_league   = comp,
+    from_id     = lag(player_stint_id)
+  ) %>%
+  ungroup() %>%
+  filter(
+    !is.na(from_league),
+    from_league != to_league
+  )
+
+df_stints_pre <- df_stints %>%
+  select(
+    player,
+    player_stint_id,
+    seasons,
+    total_mins,
+    all_of(defender_stats)
+  ) %>%
+  rename(
+    seasons_pre = seasons,
+    total_mins_pre = total_mins
+  ) %>%
+  rename_with(
+    ~ paste0(.x, "_pre"),
+    all_of(defender_stats)
+  )
+
+df_stints_post <- df_stints %>%
+  select(
+    player,
+    player_stint_id,
+    seasons,
+    total_mins,
+    all_of(defender_stats)
+  ) %>%
+  rename(
+    seasons_post = seasons,
+    total_mins_post = total_mins
+  ) %>%
+  rename_with(
+    ~ paste0(.x, "_post"),
+    all_of(defender_stats)
+  )
+
+df_transfer_events <- df_transfers %>%
+  left_join(
+    df_stints_pre, by = c("player", "from_id" = "player_stint_id")) %>%
+  left_join(
+    df_stints_post, by = c("player", "player_stint_id")
+  )
+
+for (stat in defender_stats) {
+  pre_col  <- paste0(stat, "_pre")
+  post_col <- paste0(stat, "_post")
+  if (
+    pre_col %in% names(df_transfer_events) &
+    post_col %in% names(df_transfer_events)
+  ) {
+    df_transfer_events[[paste0(stat, "_delta")]] <-
+      df_transfer_events[[post_col]] -
+      df_transfer_events[[pre_col]]
+  }
+}
+
+df_transfer_events <- df_transfer_events %>%
+  select(
+    player,
+    from_league,
+    to_league,
+    avg_age,
+    seasons_pre,
+    seasons_post,
+    total_mins_pre,
+    total_mins_post,
+    ends_with("_pre"),
+    ends_with("_post"),
+    ends_with("_delta")
+  )
+
+delta_cols <- grep("_delta$", names(df_transfer_events), value = TRUE)
+
+df_transfer_events <- df_transfer_events %>%
+  mutate(
+    across(
+      all_of(delta_cols),
+      ~ as.numeric(scale(.x)),
+      .names = "{.col}_z"
+    )
+  )
+```
+
+```{r}
+df_transfer_events %>%
+  count(from_league, to_league) %>%
+  ggplot(aes(from_league,to_league,fill=n)) +
+  geom_tile() +
+  geom_text(aes(label=n), color = "white", size = 5) +
+  scale_fill_gradient() +
+  labs(
+    title="Observed Defender Transfers 2020-2025",
+    x="Origin League",
+    y="Destination League"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+m_int <- lmer(`Interceptions per 90` ~ age + `Dribble Tackle Success %` +
+   `Aerial Duel Win %` + comp + (1|player) + (1|squad), data=defenders)
+summary(m_int)
+
+m_key <- lmer(
+  `Key Passes per 90` ~ age +
+    `Pass Completion %` +
+    `Progressive Pass Distance per 90` +
+    comp +
+    (1|player) + (1|squad),
+  data = defenders
+)
+
+m_aerial <- lmer(
+  `Aerial Duel Win %` ~ age +
+    `Interceptions per 90` +
+    `Passes Blocked per 90` +
+    comp +
+    (1|player) + (1|squad),
+  data = defenders
+)
+```
+
+```{r}
+newdat <- expand.grid(
+  age = mean(defenders$age),
+  `Dribble Tackle Success %` = mean(defenders$`Dribble Tackle Success %`),
+  `Aerial Duel Win %` = mean(defenders$`Aerial Duel Win %`),
+  comp = unique(defenders$comp)
+)
+
+newdat$pred <- predict(m_int, newdata = newdat, re.form = NA)
+print(newdat)
+
+deltas <- expand_grid(
+  from_league = newdat$comp,
+  to_league = newdat$comp
+) %>%
+  left_join(
+    newdat %>% select(comp,pred),
+    by = c("from_league"="comp")
+  ) %>%
+  rename(pred_from = pred) %>%
+  left_join(
+    newdat %>% select(comp,pred),
+    by = c("to_league"="comp")
+  ) %>%
+  rename(pred_to = pred) %>%
+  mutate(
+    delta = pred_to - pred_from
+  )
+
+ggplot(
+  deltas,
+  aes(from_league,to_league,fill=delta)
+) +
+  geom_tile() +
+  geom_text(aes(label=round(delta,2)),
+            color="white",
+            size=5) +
+  scale_fill_gradient2() +
+  labs(
+    title="Predicted Change in Interceptions per 90 After League Switch",
+    x="Origin League",
+    y="Destination League"
+  ) +
+  theme_minimal()
+
+VarCorr(m_int)
+```
+
+```{r}
+m_null <- update(
+  m_int,
+  . ~ . - comp
+)
+
+anova(
+  m_null,
+  m_int
+)
+
+m_age_linear <- lmer(
+ `Interceptions per 90` ~
+   age +
+   `Dribble Tackle Success %` +
+   `Aerial Duel Win %` +
+   `Passes Blocked per 90` +
+   comp +
+   (1|player) +
+   (1|squad),
+ data=defenders
+)
+
+m_age_quad <- lmer(
+ `Interceptions per 90` ~
+   age + I(age^2) +
+   `Dribble Tackle Success %` +
+   `Aerial Duel Win %` +
+   `Passes Blocked per 90` +
+   comp +
+   (1|player) +
+   (1|squad),
+ data=defenders
+)
+
+anova(m_age_linear, m_age_quad)
+
+m0 <- lmer(
+ `Interceptions per 90` ~
+   age +
+   comp +
+   (1|player) +
+   (1|squad),
+ data=defenders
+)
+
+m1 <- lmer(
+ `Interceptions per 90` ~
+   age +
+   `Dribble Tackle Success %` +
+   comp +
+   (1|player) +
+   (1|squad),
+ data=defenders
+)
+
+m2 <- lmer(
+ `Interceptions per 90` ~
+   age +
+   `Dribble Tackle Success %` +
+   `Aerial Duel Win %` +
+   comp +
+   (1|player) +
+   (1|squad),
+ data=defenders
+)
+
+m3 <- lmer(
+ `Interceptions per 90` ~
+   age +
+   `Dribble Tackle Success %` +
+   `Aerial Duel Win %` +
+   `Passes Blocked per 90` +
+   comp +
+   (1|player) +
+   (1|squad),
+ data=defenders
+)
+
+m4 <- lmer(
+ `Interceptions per 90` ~
+   age +
+   `Dribble Tackle Success %` +
+   `Aerial Duel Win %` +
+   `Passes Blocked per 90` +
+   `Expected Goals (xG)` +
+   comp +
+   (1|player) +
+   (1|squad),
+ data=defenders
+)
+
+AIC(m0,m1,m2,m3,m4)
+anova(m0,m1,m2,m3,m4)
+
+m_fixed_only <- lm(
+`Interceptions per 90` ~ age +
+`Dribble Tackle Success %` +
+`Aerial Duel Win %` +
+`Passes Blocked per 90` +
+comp,
+data = defenders
+)
+
+m_player_re <- lmer(
+`Interceptions per 90` ~ age +
+`Dribble Tackle Success %` +
+`Aerial Duel Win %` +
+`Passes Blocked per 90` +
+comp +
+(1|player),
+data = defenders,
+REML = FALSE
+)
+
+m_squad_re <- lmer(
+`Interceptions per 90` ~ age +
+`Dribble Tackle Success %` +
+`Aerial Duel Win %` +
+`Passes Blocked per 90` +
+comp +
+(1|squad),
+data = defenders,
+REML = FALSE
+)
+
+m_player_squad_re <- lmer(
+`Interceptions per 90` ~ age +
+`Dribble Tackle Success %` +
+`Aerial Duel Win %` +
+`Passes Blocked per 90` +
+comp +
+(1|player) + (1|squad),
+data = defenders,
+REML = FALSE
+)
+
+AIC(m_fixed_only, m_player_re, m_squad_re, m_player_squad_re)
+anova(m_player_re, m_player_squad_re)
+anova(m_squad_re, m_player_squad_re)
+```
+```
+
