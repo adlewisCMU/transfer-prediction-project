@@ -9,6 +9,10 @@ format:
     geometry:
       - margin=1in
     toc: false
+    include-in-header:
+      text: |
+        \usepackage{longtable}
+        \usepackage{booktabs}
 ---
 
 ```{r setup, include=FALSE}
@@ -25,7 +29,11 @@ knitr::opts_chunk$set(echo = FALSE)
 
 # Data
 
+If we simply look at the raw data and find the league means for a wide range of stats, we can begin to pull some inferences just on the eye test.
 
+![]("raw_heatmap.png")
+
+For example, the Premier League is notoriously a methodical, pass-heavy league full of high-talent, expensive players succeed through tons of low risk passes that spread out the field. The skill gap and preference for constant ball movement explains the positive z-scores in the majority of statistics, but its only low z-score statistics involve defense like tackle success % and interceptions which require physical on-the-ball-defense, something uncommon, but their skill is nonetheless shown by a low offensive stat like successful take-on % which is a 1-on-1 statistic, highlighting that defensive skill. However, we can get confounded results here with the low values almost across the board for La Liga and Serie A. Are both these leagues simply worse at football? Are both these leagues simply very difficult to play in? We cannot really infer these based on the raw data which is why we wish to build models that can help predict which metrics and player skillsets are valued in each of these leagues.
 
 # Methods (Jeffrey)
 
@@ -33,9 +41,11 @@ knitr::opts_chunk$set(echo = FALSE)
 
 # Methods (Alex)
 
-My particular idea was to try and find out how defender profiles may translate to each of the 5 leagues. Especially within this dataset, defenders offer an interesting challenge due to the complex nature of what it means to succeed on defense. In many sports, identifying the “best defenders” often means praising offensive production, where defensive value is determined via scoring contributions. This doesn't really work in soccer since positions are far more rigid. Defenders are never expected to score goals in the same way strikers are never expected to play defense, so the most commonly used metrics to determine quality such as goals, assists, or shot-creating actions, as have been touched on, hardly reflect defensive value.
+My particular idea was to try and find out how defender profiles may translate to each of the 5 leagues. In the primary dataset, there are 1,185 unique defenders who have played a season with over 900 total minutes (to guarantee fair samples) and 2,586 player-seasons to look through.
 
-To try and combat the fact there is no "composite metric" for defense, and thus no single variable or metric to use in a model, I created a series of mixed-effect models. For a metric m in a player-season i:
+Especially within this dataset, defenders offer an interesting challenge due to the complex nature of what it means to succeed on defense. In many sports, identifying the “best defenders” often means praising offensive production, where defensive value is determined via scoring contributions. This doesn't really work in soccer since positions are far more rigid. Defenders are never expected to score goals in the same way strikers are never expected to play defense, so the most commonly used metrics to determine quality such as goals, assists, or shot-creating actions, as have been touched on, hardly reflect defensive value.
+
+To try and combat the fact there is no "composite metric" for defense, and thus no single variable to use as something to be predicted in a model (like an expected goals against or game score), I created a series of mixed-effect models for all metrics. For a metric m in a player-season i:
 
 $$
 Y_{im} = \beta_{0m} + \mathbf{x}_{im}^{\top}\boldsymbol{\beta}_m + \alpha_{L(i),m} + \mathbf{z}_{im}^{\top}\boldsymbol{\delta}_{L(i),m} + u_{p(i),m} + v_{s(i),m} + \epsilon_{im}
@@ -43,14 +53,17 @@ $$
 
 where...
 
-$$
-\mathbf{x}_{im}^{\top}\boldsymbol{\beta}_m = \text{all player profile variables + age} \\
-\alpha_{L(i),m} = \text{league L fixed effect on metric m} \\
-\mathbf{z}_{im}^{\top}\boldsymbol{\delta}_{L(i),m} = \text{league-by-trait interactions, ex. defensive stats impact other defensive stats due to league systems} \\
-u_{p(i),m}, v_{s(i),m} = \text{random effects for player p and squad s respectively}
-$$
+\begin{center}
+$\mathbf{x}_{im}^{\top}\boldsymbol{\beta}_m$ = all player profile variables + age
 
-We assume the random effects follow the following distributions:
+$\alpha_{L(i),m}$ = league \(L\) fixed effect on metric \(m\)
+
+$\mathbf{z}_{im}^{\top}\boldsymbol{\delta}_{L(i),m}$ = league-by-trait interactions, e.g. defensive stats impact other defensive stats due to league systems
+
+$u_{p(i),m}, v_{s(i),m}$ = random effects for player \(p\) and squad \(s\), respectively
+\end{center}
+
+We can assume that individual clubs (or squads) have their own tactics and strategies that directly deviate from the league effects, even if the league likely shapes their approaches. Player-level random effects should account for the differences in underlying ability not fully explained by observed covariates. We assume the random effects follow the following distributions:
 
 $$
 \begin{aligned}
@@ -93,7 +106,45 @@ Fixed Effects Only & 20 & 3290.841 & 400.736\\
 \end{tabular}
 $$
 
-Since I didn't want to create a wild assortment of ~30 models, I settled on evaluating 6 metrics split by their ability to capture 2 larger ideas of quality defense in soccer. First, to represent physical defense and an ability to take away possession from an attacking team, I chose "Interceptions per 90", "
+Since I didn't want to create a wild assortment of ~30 models, I settled on evaluating 6 metrics split by their ability to capture 2 larger ideas of quality defense in soccer. First, to represent physical defense and an ability to take away ball possession from an attacking team, I chose "Interceptions per 90", "Tackle Success %", and "Aerial Duel Win %" which highlight proficiencies in positioning and winning challenges against ball carriers. Then, for the ball-playing portion of defense since nearly all attacks start from a defender's ability to pass the ball out of their end of the field, I chose "Key Passes per 90" (a key pass is any pass made before the receiver takes a shot), "Pass Completion %", and "Progressive Passing Distance per 90" (a measure in meters of passing distance up the field), which highlight a defender's reliability with the ball and their ball-playing usage in either generating offense or general movement toward offense.
+
+Now with a set of variables, here's an example of how the "Interceptions per 90" model would look:
+
+$$
+\begin{aligned}
+\text{Int90}_i
+=&\,
+\beta_0
++ \beta_1 Age_i
++ \beta_2 KeyPass90_i
++ \beta_3 PassComp_i
++ \beta_4 ProgDist90_i \\
+&+
+\alpha_{L(i)}
++
+\theta_{L(i)} TackSuccess_i
++
+\phi_{L(i)} AerialWin_i \\
+&+
+u_{p(i)}
++
+v_{s(i)}
++
+\epsilon_i
+\end{aligned}
+$$
+
+To show that the Normality assumptions hold for the random effects:
+
+![]("random_effects.png")
+
+Theoretically, with a full assortment of models, you could create full player-specific “translation profiles” for every defender. However, that proved extremely difficult so instead, results will be shown through two stylized "archetypes", leaning into those earlier ideas of what it means to be a quality defender:
+
+- A "Ball-Playing" defender is one who is far above average as a passer and ball movement specialist, but falls short in terms of physical defense, represented by having all of his defensive stats set to the 25th percentile of the full dataset and his ball movement stats at the 75th percentile.
+
+- A "Ball-Winning" defender is one who is far above average as a defender who excels at interrupting attacks, but falls short in ball movement, represented with all defensive stats at the 75th percentile and ball movement stats at the 25th percentile.
+
+These contrasting profiles should provide an interpretable way to study how different defender skillsets may be relatively better suited to different leagues.
 
 # Results (Jeffrey)
 
@@ -101,11 +152,19 @@ Since I didn't want to create a wild assortment of ~30 models, I settled on eval
 
 # Results (Alex)
 
-Below is a heatmap showing the estimated values, scaled to z-scores for comparability, where each cell represents the mixed-model prediction of how suitable a given league is for a particular defender archetype on a specific performance dimension, relative to the average predicted performance across all league–archetype combinations for that metric. Positive values indicate that the given league amplifies the performance metric for a given archetype, while negative values indicate relative suppression.
+Below is a heatmap showing the estimated values, scaled to z-scores for comparability, where each cell represents the mixed-model prediction of how suitable a given league is for the defender archetype on a specific performance dimension, relative to the average predicted performance across all league–archetype combinations for that metric. Positive values indicate that the given league amplifies the performance metric for a given archetype, while negative values indicate relative suppression.
 
 ![]("league_suitability_heatmap.png")
 
+We see that generally, defender translation isn't characterized by a best or worst league exhibiting full rows of strong values across both profiles, but rather by more league-specific compatibility, also indicated by the fact that despite having "opposite" stats as input, the two plots are not pure opposite one another. While interpreting individual cells alone does not mean much, just by nature of the project, we can pull general league-wide takeaways for the value each skillset offers. These are some examples.
 
+Ligue 1 exhibits very consistent high values for specifically ball-winning defenders. This suggests the league is especially favorable for these great high-event defensive profiles which hinge on positioning and physical ability, so much so that, per the model, their defensive prowess greatly amplifies some ball-movement metrics compared to other leagues.
+
+The largest value on the heatmap has a curious context. Ball-playing defenders exhibit consistently low values in the Bundesliga, suggesting their skillset does not fit the league, but their 1.98 z-score for progressive passing distance is certainly worth a note. This suggests that the Bundesliga values strong defensive defenders who possess the ability to reliably stretch the field long distances and that that particular talent would make a defender very valuable in the league.
+
+While the mostly negative values in the ball-playing profile suggest ball-movement as a defender is, as expected, not as important as strong ball-winning capabilities across leagues, the most suitable league for a strong ball-playing defender is Serie A being the only league with positive values for all the ball-movement oriented stats for ball-playing defenders. This suggests that Serie A may prefer possession-oriented defenders due to styles of controlled progression and technical passing, rather than high-event defensive systems.
+
+To quantify the uncertainty of all these results, I created 95% confidence intervals for the models' predicted values (non-scaled) of each metric by archetype by league using parametric bootstrap resampling with 500 simulations per metric / model. Since this is a large table, it is housed in the Appendix as "Table 1: Uncertainty Table of Estimated Defender Metrics per Archetype per League".
 
 # Discussion
 
@@ -113,3 +172,108 @@ Below is a heatmap showing the estimated values, scaled to z-scores for comparab
 
 *All code is available here: https://github.com/adlewisCMU/transfer-prediction-project/tree/main*
 
+## Table 1: Uncertainty Table of Estimated Defender Metrics per Archetype per League
+
+\begin{longtable}{llll}
+\caption{Uncertainty Table of Estimated Defender Metrics per Archetype per League} \\
+\toprule
+Archetype & League & Metric & Estimate (95\% CI) \\
+\midrule
+\endfirsthead
+
+\toprule
+Archetype & League & Metric & Estimate (95\% CI) \\
+\midrule
+\endhead
+
+\midrule
+\multicolumn{4}{r}{Continued on next page} \\
+\endfoot
+
+\bottomrule
+\endlastfoot
+
+Ball-Playing & Bundesliga & Aerial Duel Win \% & 52.364 (50.823, 53.974)\\
+Ball-Playing & La Liga & Aerial Duel Win \% & 52.053 (50.685, 53.545)\\
+Ball-Playing & Ligue 1 & Aerial Duel Win \% & 52.690 (51.282, 54.393)\\
+Ball-Playing & Premier League & Aerial Duel Win \% & 54.313 (52.872, 55.797)\\
+Ball-Playing & Serie A & Aerial Duel Win \% & 53.149 (51.799, 54.560)\\
+
+\addlinespace
+Ball-Playing & Bundesliga & Interceptions per 90 & 1.209 (1.133, 1.291)\\
+Ball-Playing & La Liga & Interceptions per 90 & 1.060 (0.992, 1.133)\\
+Ball-Playing & Ligue 1 & Interceptions per 90 & 1.306 (1.231, 1.375)\\
+Ball-Playing & Premier League & Interceptions per 90 & 1.100 (1.029, 1.181)\\
+Ball-Playing & Serie A & Interceptions per 90 & 1.114 (1.047, 1.180)\\
+
+\addlinespace
+Ball-Playing & Bundesliga & Key Passes per 90 & 0.490 (0.401, 0.572)\\
+Ball-Playing & La Liga & Key Passes per 90 & 0.457 (0.382, 0.532)\\
+Ball-Playing & Ligue 1 & Key Passes per 90 & 0.502 (0.430, 0.580)\\
+Ball-Playing & Premier League & Key Passes per 90 & 0.519 (0.444, 0.600)\\
+Ball-Playing & Serie A & Key Passes per 90 & 0.554 (0.482, 0.628)\\
+
+\addlinespace
+Ball-Playing & Bundesliga & Pass Completion \% & 78.959 (77.491, 80.475)\\
+Ball-Playing & La Liga & Pass Completion \% & 79.447 (77.922, 80.940)\\
+Ball-Playing & Ligue 1 & Pass Completion \% & 81.112 (79.604, 82.650)\\
+Ball-Playing & Premier League & Pass Completion \% & 80.193 (78.842, 81.556)\\
+Ball-Playing & Serie A & Pass Completion \% & 81.896 (80.544, 83.243)\\
+
+\addlinespace
+Ball-Playing & Bundesliga & Progressive Pass Distance per 90 & 337.204 (323.622, 352.507)\\
+Ball-Playing & La Liga & Progressive Pass Distance per 90 & 286.111 (272.886, 300.665)\\
+Ball-Playing & Ligue 1 & Progressive Pass Distance per 90 & 299.098 (284.972, 312.560)\\
+Ball-Playing & Premier League & Progressive Pass Distance per 90 & 299.703 (286.941, 313.742)\\
+Ball-Playing & Serie A & Progressive Pass Distance per 90 & 296.961 (284.046, 308.732)\\
+
+\addlinespace
+Ball-Playing & Bundesliga & Tackle Success \% & 56.127 (54.427, 57.774)\\
+Ball-Playing & La Liga & Tackle Success \% & 57.778 (56.287, 59.155)\\
+Ball-Playing & Ligue 1 & Tackle Success \% & 56.600 (54.824, 58.198)\\
+Ball-Playing & Premier League & Tackle Success \% & 56.197 (54.613, 57.858)\\
+Ball-Playing & Serie A & Tackle Success \% & 56.160 (54.862, 57.460)\\
+
+\addlinespace
+Ball-Winning & Bundesliga & Aerial Duel Win \% & 55.013 (53.551, 56.383)\\
+Ball-Winning & La Liga & Aerial Duel Win \% & 55.466 (54.018, 56.955)\\
+Ball-Winning & Ligue 1 & Aerial Duel Win \% & 55.742 (54.270, 56.979)\\
+Ball-Winning & Premier League & Aerial Duel Win \% & 56.769 (55.282, 58.226)\\
+Ball-Winning & Serie A & Aerial Duel Win \% & 55.510 (54.093, 56.949)\\
+
+\addlinespace
+Ball-Winning & Bundesliga & Interceptions per 90 & 1.431 (1.348, 1.522)\\
+Ball-Winning & La Liga & Interceptions per 90 & 1.224 (1.147, 1.298)\\
+Ball-Winning & Ligue 1 & Interceptions per 90 & 1.556 (1.483, 1.629)\\
+Ball-Winning & Premier League & Interceptions per 90 & 1.283 (1.213, 1.354)\\
+Ball-Winning & Serie A & Interceptions per 90 & 1.334 (1.257, 1.416)\\
+
+\addlinespace
+Ball-Winning & Bundesliga & Key Passes per 90 & 0.584 (0.501, 0.661)\\
+Ball-Winning & La Liga & Key Passes per 90 & 0.452 (0.374, 0.522)\\
+Ball-Winning & Ligue 1 & Key Passes per 90 & 0.663 (0.581, 0.740)\\
+Ball-Winning & Premier League & Key Passes per 90 & 0.526 (0.449, 0.592)\\
+Ball-Winning & Serie A & Key Passes per 90 & 0.590 (0.512, 0.662)\\
+
+\addlinespace
+Ball-Winning & Bundesliga & Pass Completion \% & 78.212 (76.670, 79.767)\\
+Ball-Winning & La Liga & Pass Completion \% & 79.377 (77.898, 80.860)\\
+Ball-Winning & Ligue 1 & Pass Completion \% & 81.894 (80.520, 83.395)\\
+Ball-Winning & Premier League & Pass Completion \% & 78.980 (77.546, 80.399)\\
+Ball-Winning & Serie A & Pass Completion \% & 80.750 (79.358, 82.249)\\
+
+\addlinespace
+Ball-Winning & Bundesliga & Progressive Pass Distance per 90 & 286.484 (272.847, 299.980)\\
+Ball-Winning & La Liga & Progressive Pass Distance per 90 & 263.462 (251.276, 277.169)\\
+Ball-Winning & Ligue 1 & Progressive Pass Distance per 90 & 254.614 (236.480, 269.924)\\
+Ball-Winning & Premier League & Progressive Pass Distance per 90 & 256.205 (244.117, 268.305)\\
+Ball-Winning & Serie A & Progressive Pass Distance per 90 & 249.499 (234.872, 263.928)\\
+
+\addlinespace
+Ball-Winning & Bundesliga & Tackle Success \% & 57.329 (55.690, 58.915)\\
+Ball-Winning & La Liga & Tackle Success \% & 58.088 (56.580, 59.717)\\
+Ball-Winning & Ligue 1 & Tackle Success \% & 58.578 (57.144, 60.020)\\
+Ball-Winning & Premier League & Tackle Success \% & 57.981 (56.463, 59.514)\\
+Ball-Winning & Serie A & Tackle Success \% & 57.067 (55.502, 58.621)\\
+
+\end{longtable}

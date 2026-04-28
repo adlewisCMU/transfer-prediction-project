@@ -99,6 +99,66 @@ defenders <- outfielders %>%
   )
 ```
 
+```{r}
+# my attempt at making a heatmap across all leagues for all stats that have an interpretable effect
+attacking_stats  <- c("Goals per 90", "Assists per 90", "Shots per 90",
+                      "Expected Goals (xG)", "Shot Creating Actions per 90",
+                      "Goal Creating Actions per 90", "Goals per Shot")
+defensive_stats  <- c("Tackles Attempted", "Tackles Won", "Interceptions",
+                      "Clearances", "Shots Blocked", "Passes Blocked",
+                      "Dribble Tackle Success %")
+passing_stats    <- c("Pass Completion %", "Key Passes",
+                      "Progressive Pass Distance", "Passes into Final Third",
+                      "Passes into Penalty Area", "Progressive Passes")
+possession_stats <- c("Take-Ons Attempted", "Successful Take-On %",
+                      "Progressive Carries", "Carries into Final Third",
+                      "Carries into Penalty Area", "Possessions Lost",
+                      "Aerial Duel Win %")
+all_focal_stats  <- c(attacking_stats, defensive_stats, passing_stats, possession_stats)
+
+eta_sq <- map_dfr(all_focal_stats, function(stat) {
+  league_stat_data <- outfielders %>%
+    select(comp, value = all_of(stat)) %>%
+    drop_na()
+  
+  grand_mean <- mean(league_stat_data$value)
+  ss_total <- sum((league_stat_data$value - grand_mean)^2)
+  
+  ss_between_leagues <- league_stat_data %>%
+    group_by(comp) %>%
+    summarise(n_players = n(), league_mean = mean(value)) %>%
+    summarise(ss_between = sum(n_players * (league_mean - grand_mean)^2)) %>%
+    pull(ss_between)
+  
+  tibble(
+    stat   = stat,
+    eta_sq = ss_between_leagues / ss_total,
+    f_stat = summary(aov(value ~ comp, data = league_stat_data))[[1]]$`F value`[1]
+  )
+})
+
+eta_sq <- eta_sq %>% arrange(desc(eta_sq))
+
+league_stat_means <- outfielders %>%
+  group_by(comp) %>%
+  summarise(across(all_of(all_focal_stats), \(x) mean(x, na.rm = TRUE))) %>%
+  pivot_longer(-comp, names_to = "stat", values_to = "league_mean") %>%
+  group_by(stat) %>%
+  mutate(z_score = (league_mean - mean(league_mean)) / sd(league_mean)) %>%
+  ungroup()
+
+ggplot(league_stat_means, aes(x = comp, y = reorder(stat, z_score), fill = z_score)) +
+  geom_tile(color = "white", linewidth = 0.4) +
+  geom_text(aes(label = round(z_score, 2)), size = 3) +
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue",
+                       midpoint = 0, name = "Z-score") +
+  labs(title    = "Heatmap of Player Stats By League",
+       subtitle = "Z-score of league mean vs. cross-league mean",
+       x = NULL, y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
 
 ```{r}
 length(unique(defenders$player))
@@ -350,8 +410,16 @@ p_squad <- ggplot(squad_re, aes(x = effect)) +
   ) +
   theme_minimal()
 
-p_player + p_squad +
+full_plot <- p_player + p_squad +
   plot_annotation(title = "Distribution of Random Effects from Interceptions Model")
+
+ggsave(
+  filename = "random_effects.png",
+  plot = full_plot,
+  width = 10,
+  height = 5,
+  dpi = 300
+)
 ```
 
 ```{r}
@@ -403,8 +471,17 @@ ci_int <- make_boot_table(m_int, newdata_all, "Interceptions per 90", nsim = 500
 ci_key <- make_boot_table(m_key, newdata_all, "Key Passes per 90", nsim = 500)
 ci_aerial <- make_boot_table(m_aerial, newdata_all, "Aerial Duel Win %", nsim = 500)
 ci_prog <- make_boot_table(m_prog, newdata_all, "Progressive Pass Distance per 90", nsim = 500)
+ci_drib <- make_boot_table(m_drib, newdata_all, "Tackle Success %", nsim = 500)
+ci_pass <- make_boot_table(m_pass, newdata_all, "Pass Completion %", nsim = 500)
 
-uncertainty_table <- bind_rows(ci_int, ci_key, ci_aerial, ci_prog) %>%
+uncertainty_table <- bind_rows(
+  ci_int,
+  ci_drib,
+  ci_aerial,
+  ci_pass,
+  ci_key,
+  ci_prog
+) %>%
   arrange(archetype, metric, comp) %>%
   mutate(
     estimate = round(estimate, 3),
@@ -414,6 +491,21 @@ uncertainty_table <- bind_rows(ci_int, ci_key, ci_aerial, ci_prog) %>%
   )
 uncertainty_table %>%
   select(archetype, comp, metric, ci)
+
+cat(
+  knitr::kable(
+    uncertainty_table %>%
+      select(
+        Archetype = archetype,
+        League = comp,
+        Metric = metric,
+        `Estimate (95% CI)` = ci
+      ),
+    format = "latex",
+    booktabs = TRUE,
+    caption = "Uncertainty table of estimated defender metrics per archetype per league"
+  )
+)
 ```
 
 ```{r}
