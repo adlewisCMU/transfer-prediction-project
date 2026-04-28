@@ -168,9 +168,11 @@ To quantify the uncertainty of all these results, I created 95% confidence inter
 
 # Discussion
 
+As far as the defender-oriented approach goes, a key issue just in terms of data is that the primary dataset has no concept of centerbacks and wing-backs which often serve different roles in strategy. As far as modeling goes, the "model per metric" approach contains a lot of interactions that cannot be fully validated and may not scale well if applied to a full dataset's worth of information. Plus, the output generally leads to a lack of truly tangible interpretability and this leaves us just having to trust that the "weight" of each value has a genuine meaning to a general audience beyond "greater equals better". Plus, just given the lack of real transfers among defenders (166 observations), there is not a great way to compare the output to real world outcomes especially since the input and outputs are both full profiles meaning that accuracy would also be extremely difficult to nail down. Future work here simply would require stronger machines and efforts because the idea of a full-scale translation of a player's statistics across leagues is a fascinating idea but there would need to be far more data, far more statistics, and perhaps far better composite metrics for defenders to make the process easier to begin.
+
 # Appendix
 
-*All code is available here: https://github.com/adlewisCMU/transfer-prediction-project/tree/main*
+*All code is available here: https://github.com/adlewisCMU/transfer-prediction-project*
 
 ## Table 1: Uncertainty Table of Estimated Defender Metrics per Archetype per League
 
