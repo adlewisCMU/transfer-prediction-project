@@ -152,7 +152,7 @@ These contrasting profiles should provide an interpretable way to study how diff
 
 # Results (Alex)
 
-Below is a heatmap showing the estimated values, scaled to z-scores for comparability, where each cell represents the mixed-model prediction of how suitable a given league is for the defender archetype on a specific performance dimension, relative to the average predicted performance across all league–archetype combinations for that metric. Positive values indicate that the given league amplifies the performance metric for a given archetype, while negative values indicate relative suppression.
+Below is a plot showing the estimated values, scaled to z-scores for comparability, where each cell represents the mixed-model prediction of how suitable a given league is for the defender archetype on a specific performance dimension, relative to the average predicted performance across all league–archetype combinations for that metric. Positive values indicate that the given league amplifies the performance metric for a given archetype, while negative values indicate relative suppression.
 
 ![]("league_suitability_heatmap.png")
 
@@ -160,7 +160,7 @@ We see that generally, defender translation isn't characterized by a best or wor
 
 Ligue 1 exhibits very consistent high values for specifically ball-winning defenders. This suggests the league is especially favorable for these great high-event defensive profiles which hinge on positioning and physical ability, so much so that, per the model, their defensive prowess greatly amplifies some ball-movement metrics compared to other leagues.
 
-The largest value on the heatmap has a curious context. Ball-playing defenders exhibit consistently low values in the Bundesliga, suggesting their skillset does not fit the league, but their 1.98 z-score for progressive passing distance is certainly worth a note. This suggests that the Bundesliga values strong defensive defenders who possess the ability to reliably stretch the field long distances and that that particular talent would make a defender very valuable in the league.
+The largest value on the plot has a curious context. Ball-playing defenders exhibit consistently low values in the Bundesliga, suggesting their skillset does not fit the league, but their 1.98 z-score for progressive passing distance is certainly worth a note. This suggests that the Bundesliga values strong defensive defenders who possess the ability to reliably stretch the field long distances and that that particular talent would make a defender very valuable in the league.
 
 While the mostly negative values in the ball-playing profile suggest ball-movement as a defender is, as expected, not as important as strong ball-winning capabilities across leagues, the most suitable league for a strong ball-playing defender is Serie A being the only league with positive values for all the ball-movement oriented stats for ball-playing defenders. This suggests that Serie A may prefer possession-oriented defenders due to styles of controlled progression and technical passing, rather than high-event defensive systems.
 
