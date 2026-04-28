@@ -292,6 +292,36 @@ ggplot(preds, aes(metric,comp,fill=z)) +
 ```
 
 ```{r}
+heatmap_table <- preds %>%
+  mutate(
+    metric = recode(
+      metric,
+      int_pred = "Interceptions",
+      drib_pred = "Tackle Success %",
+      aerial_pred = "Aerial Win %",
+      pass_pred = "Pass Completion %",
+      key_pred = "Key Passes",
+      prog_pred = "Passing Distance"
+    ),
+    score = round(z, 3)
+  ) %>%
+  select(
+    archetype,
+    league = comp,
+    metric,
+    score
+  ) %>%
+  arrange(archetype, metric, league)
+
+heatmap_table
+
+write_csv(
+  heatmap_table,
+  "heatmap_league_suitability_scores.csv"
+)
+```
+
+```{r}
 player_re <- ranef(m_int)$player %>%
   as.data.frame() %>%
   rename(effect = `(Intercept)`)
@@ -392,8 +422,28 @@ m_age_quad <- update(
   . ~ . + I(age^2)
 )
 
-anova(m_int, m_age_quad)
+age_test <- anova(m_int, m_age_quad)
+
+library(knitr)
+
+library(knitr)
+
+lrt_table <- data.frame(
+  Comparison = "Linear vs Quadratic Age",
+  ChiSq = age_test$Chisq[2],
+  df = age_test$Df[2],
+  p_value = age_test$`Pr(>Chisq)`[2]
+)
+
+cat(
+  kable(
+    lrt_table,
+    format="latex",
+    booktabs=TRUE
+  )
+)
 ```
+
 ```{r}
 #| warning: false
 m_fixed_only <- lm(
@@ -437,4 +487,33 @@ m_squad_only <- lmer(
 m_player_squad <- update(m_int, REML = FALSE)
 
 AIC(m_fixed_only, m_player_only, m_squad_only, m_player_squad)
+
+random_effects_aic <- AIC(
+  m_fixed_only,
+  m_player_only,
+  m_squad_only,
+  m_player_squad
+) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("Model") %>%
+  mutate(
+    Model = recode(
+      Model,
+      m_fixed_only = "Fixed Effects Only",
+      m_player_only = "Player Random Effect",
+      m_squad_only = "Squad Random Effect",
+      m_player_squad = "Player + Squad Random Effects"
+    ),
+    Delta_AIC = AIC - min(AIC)
+  ) %>%
+  arrange(AIC)
+
+cat(
+  knitr::kable(
+    random_effects_aic,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3
+  )
+)
 ```

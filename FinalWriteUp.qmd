@@ -1,14 +1,14 @@
 ---
-title: "Metric Translation across Europe’s Top 5 Football Leagues"
+title: "Predicting Metric Translation for Transfers across Europe’s Top 5 Football Leagues"
 author: "Jeffrey Chen, Christian Emmanuel, Alex Lewis"
+date: "April 28, 2026"
 format:
   pdf:
     documentclass: article
-    fontsize: 11pt
+    fontsize: 10pt
     geometry:
       - margin=1in
     toc: false
-    number-sections: true
 ---
 
 ```{r setup, include=FALSE}
@@ -23,9 +23,9 @@ knitr::opts_chunk$set(echo = FALSE)
 
 
 
-*All code is available here: https://github.com/adlewisCMU/transfer-prediction-project/tree/main*
-
 # Data
+
+
 
 # Methods (Jeffrey)
 
@@ -33,12 +33,83 @@ knitr::opts_chunk$set(echo = FALSE)
 
 # Methods (Alex)
 
+My particular idea was to try and find out how defender profiles may translate to each of the 5 leagues. Especially within this dataset, defenders offer an interesting challenge due to the complex nature of what it means to succeed on defense. In many sports, identifying the “best defenders” often means praising offensive production, where defensive value is determined via scoring contributions. This doesn't really work in soccer since positions are far more rigid. Defenders are never expected to score goals in the same way strikers are never expected to play defense, so the most commonly used metrics to determine quality such as goals, assists, or shot-creating actions, as have been touched on, hardly reflect defensive value.
+
+To try and combat the fact there is no "composite metric" for defense, and thus no single variable or metric to use in a model, I created a series of mixed-effect models. For a metric m in a player-season i:
+
+$$
+Y_{im} = \beta_{0m} + \mathbf{x}_{im}^{\top}\boldsymbol{\beta}_m + \alpha_{L(i),m} + \mathbf{z}_{im}^{\top}\boldsymbol{\delta}_{L(i),m} + u_{p(i),m} + v_{s(i),m} + \epsilon_{im}
+$$
+
+where...
+
+$$
+\mathbf{x}_{im}^{\top}\boldsymbol{\beta}_m = \text{all player profile variables + age} \\
+\alpha_{L(i),m} = \text{league L fixed effect on metric m} \\
+\mathbf{z}_{im}^{\top}\boldsymbol{\delta}_{L(i),m} = \text{league-by-trait interactions, ex. defensive stats impact other defensive stats due to league systems} \\
+u_{p(i),m}, v_{s(i),m} = \text{random effects for player p and squad s respectively}
+$$
+
+We assume the random effects follow the following distributions:
+
+$$
+\begin{aligned}
+u_{p(i),m} &\sim N(0,\sigma^2_{player,m}) \\
+v_{s(i),m} &\sim N(0,\sigma^2_{squad,m}) \\
+\epsilon_{im} &\sim N(0,\sigma^2_m)
+\end{aligned}
+$$
+
+Different approaches involved including age as a nonlinear variable due to the often parabolic nature of athletic ability and age.
+
+$$
+Y_{im} = \dots + \beta_1 Age_i + \beta_2 Age_i^2 + \dots + \epsilon_{im}
+$$
+
+By ANOVA test, this addition did not contribute a significant amount of information.
+
+$$
+\begin{tabular}{lrrr}
+\toprule
+Comparison & ChiSq & df & p\_value\\
+\midrule
+Linear vs Quadratic Age & 0.0804002 & 1 & 0.7767558\\
+\bottomrule
+\end{tabular}
+$$
+
+To justify the usage of random effects, I found through AIC that adding both player and squad effects, as opposed to just one or neither, improved the model fit.
+
+$$
+\begin{tabular}{lrrr}
+\toprule
+Model & df & AIC & Delta\_AIC\\
+\midrule
+Player + Squad Random Effects & 22 & 2890.105 & 0.000\\
+Player Random Effect & 21 & 2913.217 & 23.112\\
+Squad Random Effect & 21 & 3241.178 & 351.073\\
+Fixed Effects Only & 20 & 3290.841 & 400.736\\
+\bottomrule
+\end{tabular}
+$$
+
+Since I didn't want to create a wild assortment of ~30 models, I settled on evaluating 6 metrics split by their ability to capture 2 larger ideas of quality defense in soccer. First, to represent physical defense and an ability to take away possession from an attacking team, I chose "Interceptions per 90", "
+
 # Results (Jeffrey)
 
 # Results (Christian)
 
 # Results (Alex)
 
+Below is a heatmap showing the estimated values, scaled to z-scores for comparability, where each cell represents the mixed-model prediction of how suitable a given league is for a particular defender archetype on a specific performance dimension, relative to the average predicted performance across all league–archetype combinations for that metric. Positive values indicate that the given league amplifies the performance metric for a given archetype, while negative values indicate relative suppression.
+
+![]("league_suitability_heatmap.png")
+
+
+
 # Discussion
 
 # Appendix
+
+*All code is available here: https://github.com/adlewisCMU/transfer-prediction-project/tree/main*
+
