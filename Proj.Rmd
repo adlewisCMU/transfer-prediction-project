@@ -1,0 +1,1644 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(janitor)
+library(dplyr)
+library(readr)
+library(purrr)
+library(lme4)
+library(mgcv)
+library(MASS)
+library(purrr)
+library(stringr)
+library(glmnet)
+library(ggrepel)
+library(ggplot2)
+library(rlang)
+library(knitr)
+library(stringr)
+library(forcats)
+set.seed(10)
+```
+
+```{r, echo=FALSE, include=FALSE}
+Sys.getlocale()
+Sys.setlocale("LC_CTYPE", "English_United States.UTF-8")
+
+fc20 <- read_csv("data/players_20.csv", locale = locale(encoding = "UTF-8"), show_col_types = FALSE) %>% clean_names()
+fc21 <- read_csv("data/players_21.csv", locale = locale(encoding = "UTF-8"), show_col_types = FALSE) %>% clean_names()
+fc22 <- read_csv("data/players_22.csv", locale = locale(encoding = "UTF-8"), show_col_types = FALSE) %>% clean_names()
+fc23 <- read_csv("data/players_23.csv", locale = locale(encoding = "UTF-8"), show_col_types = FALSE) %>% clean_names()
+fc24 <- read_csv("data/players_24.csv", locale = locale(encoding = "UTF-8"), show_col_types = FALSE) %>% clean_names() 
+fc25 <- read_csv("data/players_25.csv", locale = locale(encoding = "UTF-8"), show_col_types = FALSE) %>% clean_names()
+fc26 <- read_csv("data/players_26.csv", locale = locale(encoding = "UTF-8"), show_col_types = FALSE) %>% clean_names()
+fc24$player_id <- as.numeric(sub(".*/([0-9]+)$", "\\1", fc24$url))
+fc25$player_id <- as.numeric(sub(".*/([0-9]+)$", "\\1", fc25$url))
+
+premier_league_clubs <- c(
+  "Arsenal", "Aston Villa", "AFC Bournemouth", "Brentford", "Brighton",
+  "Burnley", "Chelsea", "Crystal Palace", "Everton", "Fulham",
+  "Liverpool", "Manchester City", "Manchester Utd", "Newcastle Utd",
+  "Nott'm Forest", "Sheffield Utd", "Spurs", "West Ham", "Wolves",
+  "Luton Town"
+)
+
+la_liga_clubs <- c(
+  "Athletic Club", "Atlético de Madrid", "CA Osasuna", "Cádiz CF",
+  "D. Alavés", "FC Barcelona", "Getafe CF", "Girona FC", "Granada CF",
+  "RC Celta", "RCD Mallorca", "Rayo Vallecano", "Real Betis",
+  "Real Madrid", "Real Sociedad", "Sevilla FC", "UD Almería",
+  "UD Las Palmas", "Valencia CF", "Villarreal CF"
+)
+
+bundesliga_clubs <- c(
+  "1. FC Köln", "1. FSV Mainz 05", "Borussia Dortmund", "FC Augsburg",
+  "FC Bayern München", "Heidenheim", "RB Leipzig", "SC Freiburg",
+  "SV Darmstadt 98", "SV Werder Bremen", "TSG Hoffenheim",
+  "Union Berlin", "VfB Stuttgart", "VfL Bochum", "VfL Wolfsburg",
+  "Leverkusen", "Frankfurt", "M'gladbach"
+)
+
+ligue1_clubs <- c(
+  "AS Monaco", "Clermont Foot 63", "FC Lorient", "FC Metz", "FC Nantes",
+  "Havre AC", "LOSC Lille", "Montpellier", "OGC Nice", "OL", "OM",
+  "Paris SG", "RC Lens", "Stade Brestois 29", "Stade Rennais FC",
+  "Stade de Reims", "Strasbourg", "Toulouse FC"
+)
+
+serie_a_clubs <- c(
+  "Bergamo Calcio", "Bologna", "Cagliari", "Empoli", "Fiorentina",
+  "Frosinone", "Genoa", "Hellas Verona", "Inter", "Juventus",
+  "Latium", "Lecce", "Milan", "Monza", "Napoli FC", "Roma FC",
+  "Salernitana", "Sassuolo", "Torino", "Udinese"
+)
+
+fc24 <- fc24 %>%
+  mutate(
+    league = case_when(
+      club %in% premier_league_clubs ~ "Premier League",
+      club %in% la_liga_clubs ~ "La Liga",
+      club %in% bundesliga_clubs ~ "Bundesliga",
+      club %in% ligue1_clubs ~ "Ligue 1",
+      club %in% serie_a_clubs ~ "Serie A",
+      TRUE ~ NA_character_
+    )
+  )
+top5 <- c("Bundesliga", "Premier League", "La Liga", "Ligue 1", "Serie A")
+fc20 <- fc20 %>% rename(player = short_name, club = club_name, league = league_name, overall = overall, player_id=sofifa_id) %>% filter(,  league %in% top5)
+fc21 <- fc21 %>% rename(player = short_name, club = club_name, league = league_name, overall = overall, player_id=sofifa_id) %>% filter(,  league %in% top5)
+fc22 <- fc22 %>% rename(player = short_name, club = club_name, league = league_name, overall = overall, player_id=sofifa_id) %>% filter(,  league %in% top5)
+fc23 <- fc23 %>% rename(player = short_name, club = club_name, league = league_name, overall = overall) %>% filter(,  league %in% top5)
+fc24 <- fc24 %>% rename(player = name, club = club, overall = overall) %>% filter(,  league %in% top5)
+fc25 <- fc25 %>% rename(player = name, club = team, league = league, overall = ovr) %>% filter(,  league %in% top5)
+fc26 <- fc26 %>% rename(player = short_name, club = club_name, league = league_name, overall = overall) %>% filter(,  league %in% top5)
+season_data <- read_csv("data/cleaned_season_stats.csv", show_col_types = FALSE)
+season_data$ga_p_90 <- 90*(season_data$goals + season_data$assists)/(season_data$mins)
+season_data$goals_p_90 <- 90*(season_data$goals)/(season_data$mins)
+season_data$assists_p_90 <- 90*(season_data$assists)/(season_data$mins)
+season_data$stk_p_90 <- 0.9 * season_data$percent_successful_take_ons * season_data$take_ons_attempted / season_data$mins
+season_data$exp_npg_p_90 <- 90*season_data$exp_npg / season_data$mins
+season_data$carries_penalty_area_p_90 <- 90*season_data$carries_penalty_area / season_data$mins
+season_data$carries_final_3rd_p_90 <- 90*season_data$carries_final_3rd / season_data$mins
+season_data$possessions_lost_p_90 <- 90*season_data$possessions_lost / season_data$mins
+season_data$progressive_passes_p_90 <- 90*season_data$progressive_passes / season_data$mins
+season_data <- season_data %>%
+  filter(!is.na(player_id), !is.na(season)) %>%
+  mutate(player_id = as.character(player_id))
+
+season_data_unique <- season_data %>%
+  arrange(player_id, season, desc(matches_played), desc(mins)) %>%
+  distinct(player_id, season, .keep_all = TRUE)
+
+season_pairs <- tribble(
+  ~current_season, ~next_season,   ~df_name,
+  "2020-2021",     "2021-2022",    "df_2021_2022",
+  "2021-2022",     "2022-2023",    "df_2022_2023",
+  "2022-2023",     "2023-2024",    "df_2023_2024",
+  "2023-2024",     "2024-2025",    "df_2024_2025"
+)
+
+make_two_season_df <- function(data, current_season, next_season) {
+
+  current_df <- data %>%
+    filter(season == current_season) %>%
+    dplyr::select(-season) %>%
+    rename_with(~ paste0(.x, "_current"), -player_id)
+
+  next_df <- data %>%
+    filter(season == next_season) %>%
+    dplyr::select(-season) %>%
+    rename_with(~ paste0(.x, "_next"), -player_id)
+
+  current_df %>%
+    inner_join(next_df, by = "player_id")
+}
+
+season_model_dfs <- pmap(
+  list(season_pairs$current_season, season_pairs$next_season),
+  ~ make_two_season_df(season_data_unique, ..1, ..2)
+)
+
+names(season_model_dfs) <- season_pairs$df_name
+map_int(season_model_dfs, nrow)
+list2env(season_model_dfs, envir = .GlobalEnv)
+model_df <- bind_rows(
+  df_2021_2022 %>% mutate(season_pair = "20/21_21/22"),
+  df_2022_2023 %>% mutate(season_pair = "21/22_22/23"),
+  df_2023_2024 %>% mutate(season_pair = "22/23_23/24"),
+  df_2024_2025 %>% mutate(season_pair = "23/24_24/25")
+)
+model_df <- model_df %>%
+  mutate(cv_group = paste(season_pair, comp_current, comp_next, sep = "___"))
+groups <- unique(model_df$cv_group)
+groups <- sample(groups)
+
+v <- min(5, length(groups))
+group_fold_map <- data.frame(
+  cv_group = groups,
+  fold = rep(1:v, length.out = length(groups))
+)
+model_df <- model_df %>% left_join(group_fold_map, by = "cv_group") %>% filter(, mins_current>299 & pos_current != "GK")
+normalize_fifa <- function(df) {
+  pick_col <- function(data, candidates, default = NA) {
+    for (nm in candidates) {
+      if (nm %in% names(data)) return(data[[nm]])
+    }
+    rep(default, nrow(data))
+  }
+
+  out <- data.frame(
+    player_id   = as.character(pick_col(df, c("player_id"))),
+    player      = pick_col(df, c("player")),
+    club        = pick_col(df, c("club")),
+    league      = pick_col(df, c("league")),
+    position    = pick_col(df, c("position", "player_positions")),
+    age         = suppressWarnings(as.numeric(pick_col(df, c("age")))),
+    height      = suppressWarnings(as.numeric(pick_col(df, c("height_cm", "height")))),
+    weight      = suppressWarnings(as.numeric(pick_col(df, c("weight_kg", "weight")))),
+    ovr         = suppressWarnings(as.numeric(pick_col(df, c("overall")))),
+
+    pace        = suppressWarnings(as.numeric(pick_col(df, c("pace", "pac")))),
+    shooting    = suppressWarnings(as.numeric(pick_col(df, c("shooting", "sho")))),
+    passing     = suppressWarnings(as.numeric(pick_col(df, c("passing", "pas")))),
+    dribbling   = suppressWarnings(as.numeric(pick_col(df, c("dribbling", "dri")))),
+    defending   = suppressWarnings(as.numeric(pick_col(df, c("defending", "def")))),
+    physicality = suppressWarnings(as.numeric(pick_col(df, c("physic", "physicality", "phy")))),
+
+    acceleration         = suppressWarnings(as.numeric(pick_col(df, c("movement_acceleration", "acceleration")))),
+    sprint_speed         = suppressWarnings(as.numeric(pick_col(df, c("movement_sprint_speed", "sprint_speed", "sprint")))),
+    positioning          = suppressWarnings(as.numeric(pick_col(df, c("mentality_positioning", "positioning")))),
+    finishing            = suppressWarnings(as.numeric(pick_col(df, c("attacking_finishing", "finishing")))),
+    shot_power           = suppressWarnings(as.numeric(pick_col(df, c("power_shot_power", "shot_power", "shot")))),
+    long_shots           = suppressWarnings(as.numeric(pick_col(df, c("power_long_shots", "long_shots", "long")))),
+    volleys              = suppressWarnings(as.numeric(pick_col(df, c("attacking_volleys", "volleys")))),
+    penalties            = suppressWarnings(as.numeric(pick_col(df, c("mentality_penalties", "penalties")))),
+    vision               = suppressWarnings(as.numeric(pick_col(df, c("mentality_vision", "vision")))),
+    crossing             = suppressWarnings(as.numeric(pick_col(df, c("attacking_crossing", "crossing")))),
+    free_kick_accuracy   = suppressWarnings(as.numeric(pick_col(df, c("skill_fk_accuracy", "free_kick_accuracy", "free")))),
+    short_passing        = suppressWarnings(as.numeric(pick_col(df, c("attacking_short_passing", "short_passing")))),
+    long_passing         = suppressWarnings(as.numeric(pick_col(df, c("skill_long_passing", "long_passing")))),
+    curve                = suppressWarnings(as.numeric(pick_col(df, c("skill_curve", "curve")))),
+    agility              = suppressWarnings(as.numeric(pick_col(df, c("movement_agility", "agility")))),
+    balance              = suppressWarnings(as.numeric(pick_col(df, c("movement_balance", "balance")))),
+    reactions            = suppressWarnings(as.numeric(pick_col(df, c("movement_reactions", "reactions")))),
+    ball_control         = suppressWarnings(as.numeric(pick_col(df, c("skill_ball_control", "ball_control", "ball")))),
+    composure            = suppressWarnings(as.numeric(pick_col(df, c("mentality_composure", "composure")))),
+    interceptions        = suppressWarnings(as.numeric(pick_col(df, c("mentality_interceptions", "interceptions")))),
+    heading_accuracy     = suppressWarnings(as.numeric(pick_col(df, c("attacking_heading_accuracy", "heading_accuracy", "heading")))),
+    def_awareness        = suppressWarnings(as.numeric(pick_col(df, c("defending_marking_awareness", "def_awareness", "def")))),
+    standing_tackle      = suppressWarnings(as.numeric(pick_col(df, c("defending_standing_tackle", "standing_tackle", "standing")))),
+    sliding_tackle       = suppressWarnings(as.numeric(pick_col(df, c("defending_sliding_tackle", "sliding_tackle", "sliding")))),
+    jumping              = suppressWarnings(as.numeric(pick_col(df, c("power_jumping", "jumping")))),
+    stamina              = suppressWarnings(as.numeric(pick_col(df, c("power_stamina", "stamina")))),
+    strength             = suppressWarnings(as.numeric(pick_col(df, c("power_strength", "strength")))),
+    aggression           = suppressWarnings(as.numeric(pick_col(df, c("mentality_aggression", "aggression")))),
+    preferred_foot       = pick_col(df, c("preferred_foot")),
+    weak_foot            = suppressWarnings(as.numeric(pick_col(df, c("weak_foot")))),
+    skill_moves          = suppressWarnings(as.numeric(pick_col(df, c("skill_moves")))),
+    gk_diving            = suppressWarnings(as.numeric(pick_col(df, c("goalkeeping_diving", "gk_diving")))),
+    gk_handling          = suppressWarnings(as.numeric(pick_col(df, c("goalkeeping_handling", "gk_handling")))),
+    gk_kicking           = suppressWarnings(as.numeric(pick_col(df, c("goalkeeping_kicking", "gk_kicking")))),
+    gk_positioning       = suppressWarnings(as.numeric(pick_col(df, c("goalkeeping_positioning", "gk_positioning")))),
+    gk_reflexes          = suppressWarnings(as.numeric(pick_col(df, c("goalkeeping_reflexes", "gk_reflexes"))))
+  )
+
+  out
+}
+
+fc20_norm <- normalize_fifa(fc20)
+fc21_norm <- normalize_fifa(fc21)
+fc22_norm <- normalize_fifa(fc22)
+fc23_norm <- normalize_fifa(fc23)
+fc24_norm <- normalize_fifa(fc24)
+fc25_norm <- normalize_fifa(fc25)
+fc26_norm <- normalize_fifa(fc26)
+fc_map <- c("20/21_21/22" = "fc22_norm","21/22_22/23" = "fc23_norm","22/23_23/24" = "fc24_norm","23/24_24/25" = "fc25_norm")
+
+
+model_fifa_df <- bind_rows(lapply(names(fc_map), function(sp) {
+  fifa_df <- get(fc_map[[sp]]) %>%
+    mutate(player_id = as.character(player_id))
+
+  model_df %>%
+    filter(season_pair == sp) %>%
+    mutate(player_id = as.character(player_id)) %>%
+    left_join(
+      fifa_df,
+      by = c("player_id" = "player_id")
+    )
+}))
+
+fifa_vars <- c(
+  "pace", "shooting", "passing", "dribbling", "physicality",
+  "finishing", "positioning", "shot_power", "volleys", "heading_accuracy",
+  "ball_control", "reactions", "composure", "balance", "jumping", "long_shots",
+  "short_passing", "vision", "crossing", "long_passing", "curve",
+  "free_kick_accuracy"
+)
+
+model_fifa_df <- model_fifa_df %>%
+  mutate(
+    across(
+      all_of(fifa_vars),
+      ~ (as.numeric(.x) - 1) / 98
+    )
+  )
+
+exclude_cols <- c(
+  "player_id",
+  "season_pair",
+  "player_current", "player_next",
+  "squad_current", "squad_next",
+  "comp_current", "comp_next",
+  "pos_current", "pos_next",
+  "goals_p_90_next", "assists_p_90_next", "ga_p_90_next"
+)
+model_fifa_df %>%
+  mutate(
+    season_pair = as.factor(season_pair),
+    comp_current = as.factor(comp_current),
+    comp_next = as.factor(comp_next),
+    pos_current = as.factor(pos_current),
+    squad_current = as.factor(squad_current),
+    squad_next = as.factor(squad_next)
+  )
+
+model_fifa_df <- model_fifa_df %>%
+  mutate(
+    across(
+      .cols = setdiff(names(.)[sapply(., is.numeric)], exclude_cols),
+      .fns = ~ {
+        rng <- range(.x, na.rm = TRUE)
+        if (is.infinite(rng[1]) || is.infinite(rng[2]) || is.na(rng[1]) || rng[1] == rng[2]) {
+          .x
+        } else {
+          (.x - rng[1]) / (rng[2] - rng[1])
+        }
+      }
+    )
+  )
+
+model_fifa_df_clean <- model_fifa_df %>%
+  dplyr::select(
+    goals_p_90_next, goals_p_90_current, age_current, comp_current, pos_current, comp_next,
+    exp_npg_p_90_current, shots_p_90_current, mins_current,
+    assists_p_90_next, assists_p_90_current,
+    shot_creating_actions_p_90_current, progressive_passes_p_90_current,
+    carries_final_3rd_p_90_current, carries_penalty_area_p_90_current, stk_p_90_current,
+    squad_current, squad_next, season_pair,
+    pace, shooting, passing, dribbling, physicality,
+    finishing, positioning, shot_power, volleys, heading_accuracy,
+    ball_control, reactions, composure, balance, jumping, long_shots,
+    short_passing, vision, crossing, long_passing, curve, free_kick_accuracy
+  ) %>%
+  na.omit()
+```
+```{r, echo=FALSE, warning=FALSE}
+response_var <- "goals_p_90_next"
+predictors <- c(
+  "goals_p_90_current",
+  "age_current",
+  "pos_current",
+  "exp_npg_p_90_current",
+  "shots_p_90_current",
+  "mins_current",
+  "carries_penalty_area_p_90_current"
+)
+
+plot_predictor_vs_response <- function(data, predictor, response = response_var) {
+  
+  df_plot <- data %>%
+    dplyr::select(all_of(c(response, predictor))) %>%
+    filter(
+      !is.na(.data[[response]]),
+      !is.na(.data[[predictor]])
+    )
+    
+    ggplot(df_plot, aes(x = .data[[predictor]], y = .data[[response]])) +
+      geom_point(alpha = 0.35) +
+      geom_smooth(
+        method = "gam",
+        formula = y ~ s(x, k = 5),
+        se = TRUE
+      ) +
+      labs(
+        title = paste(response, "vs", predictor),
+        x = predictor,
+        y = response
+      ) 
+    
+}
+response_var <- "assists_p_90_next"
+predictors <- c("assists_p_90_current", "age_current", "shot_creating_actions_p_90_current", "carries_final_3rd_p_90_current", "stk_p_90_current", "mins_current")
+plot_predictor_vs_response <- function(data, predictor, response = response_var) {
+  
+  df_plot <- data %>%
+    dplyr::select(all_of(c(response, predictor))) %>%
+    filter(
+      !is.na(.data[[response]]),
+      !is.na(.data[[predictor]])
+    )
+    
+    ggplot(df_plot, aes(x = .data[[predictor]], y = .data[[response]])) +
+      geom_point(alpha = 0.35) +
+      geom_smooth(
+        method = "gam",
+        formula = y ~ s(x, k = 5),
+        se = TRUE
+      ) +
+      labs(
+        title = paste(response, "vs", predictor),
+        x = predictor,
+        y = response
+      ) 
+    
+}
+```
+```{r, echo=FALSE, warning=FALSE}
+
+
+top_n <- 20
+
+goal_response <- "goals_p_90_next"
+assist_response <- "assists_p_90_next"
+corr_numeric_df <- model_fifa_df %>%
+  dplyr::select(where(is.numeric)) %>%
+  dplyr::select(
+    -matches("_next$"),
+    any_of(c(goal_response, assist_response))
+  )
+
+get_top_response_corrs <- function(data, response, top_n = 20) {
+  
+  data %>%
+    dplyr::select(
+      -any_of(setdiff(c(goal_response, assist_response), response))
+    ) %>%
+    summarise(
+      across(
+        .cols = -all_of(response),
+        .fns = ~ cor(.x, .data[[response]], use = "pairwise.complete.obs")
+      )
+    ) %>%
+    pivot_longer(
+      cols = everything(),
+      names_to = "predictor",
+      values_to = "correlation_with_response"
+    ) %>%
+    filter(!is.na(correlation_with_response)) %>%
+    filter(correlation_with_response > 0) %>%
+    arrange(desc(correlation_with_response)) %>%
+    slice_head(n = top_n)
+}
+
+make_response_corr_heatmap <- function(data, response, top_n = 20, title = NULL) {
+  
+  plot_df <- get_top_response_corrs(
+    data = data,
+    response = response,
+    top_n = top_n
+  ) %>%
+    mutate(
+      predictor = fct_reorder(
+        predictor,
+        correlation_with_response,
+        .desc = FALSE
+      ),
+      response_label = response,
+      label = round(correlation_with_response, 2)
+    )
+  
+  ggplot(
+    plot_df,
+    aes(
+      x = response_label,
+      y = predictor,
+      fill = correlation_with_response
+    )
+  ) +
+    geom_tile(color = "white", width = 0.85, height = 0.85) +
+    geom_text(aes(label = label), size = 3.5) +
+    scale_fill_gradient(
+      low = "white",
+      high = "red",
+      limits = c(0, 1)
+    ) +
+    labs(
+      title = title,
+      subtitle = paste("Top", top_n, "positively correlated numeric predictors"),
+      x = NULL,
+      y = NULL,
+      fill = "Correlation"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(size = 10),
+      axis.text.x = element_text(face = "bold"),
+      axis.text.y = element_text(size = 9),
+      panel.grid = element_blank()
+    )
+}
+
+goal_response_corr_heatmap <- make_response_corr_heatmap(
+  data = corr_numeric_df,
+  response = goal_response,
+  top_n = top_n,
+  title = "Top Positively Correlated Predictors with Next-Season Goals per 90"
+)
+
+assist_response_corr_heatmap <- make_response_corr_heatmap(
+  data = corr_numeric_df,
+  response = assist_response,
+  top_n = top_n,
+  title = "Top Positively Correlated Predictors with Next-Season Assists per 90"
+)
+
+goal_response_corr_heatmap
+assist_response_corr_heatmap
+```
+\newpage
+
+**Methods - Christian Emmanuel**  
+My approach is to model how a player's performance changes before and after a transfer by predicting per-90 metrics to show direct improvement or decline. I intend to experiment with various modelling techniques to better understand what features and model structures provide the best predictions for each metric. I would then estimate the change in Goals per 90 and Assists per 90 for a typical player in the data set holding all variables fixed when transferring between leagues. I will also provide estimates of uncertainty for for each value given a current league and destination league. Further, Inference would focus on players who transferred teams between the 23/24 season and the 24/25 season to identify the merits and limitations of the final model. As a side note I scaled all features apart from goals_p_90_next, goals_p_90_current, assists_p_90_next, assists_p_90_current to between 0 and 1 for numerical stability. My assumptions on the data are that the five seasons are similar enough for meaningful model comparisons and inference, FIFA attributes are compatible with the season-level stats, players matched correctly across data sets, per-90 metrics are comparable across players, using minutes controls for player availability in a given season, and the top 5 leagues sufficiently comparable that we can translate performance between them. In terms of modelling I assumed the previous seasons can predict future seasons, grouping players into FW, MF, DF, and GK controls for position, filtering to outfield players with more than 300 minutes accounts makes the model more representative for the attacking response metrics. I also assumed that league effects are not completely casual, and the General Additive Model is correct for bootstrapping. 
+
+I defined cross-validation folds in terms of the previous and next season pair (20/21 and 21/22, 21/22 and 22/23, 22/23 and 23/24, 23/24 and 24/25), previous season league, and current season league. I used LOOCV to evalute model generalization. My baseline models are:  
+
+goals_p_90_next ~
+  goals_p_90_current  + age_current + comp_current + pos_current + comp_next +
+  exp_npg_p_90_current + shots_p_90_current + mins_current  
+  
+and  
+
+assists_p_90_next ~
+  assists_p_90_current +
+  age_current +
+  comp_current +
+  pos_current +
+  comp_next +
+  shot_creating_actions_p_90_current +
+  progressive_passes_p_90_current +
+  carries_final_3rd_p_90_current +
+  carries_penalty_area_p_90_current +
+  stk_p_90_current +
+  mins_current   
+  
+  
+From the EDA above, the most correlated predictors for goals per 90 next season are related scoring stats from the current like Expected non-penalty XG, shots per 90, and goals per 90. Followed by attacking FIFA attributes like finishing and then we have current season ball-carry and possession stats. It is quite similar for assists where we have chance creating metrics for the season then FIFA attacking attributes, and then ball progression metrics from the current season.   These models were picked after some experimentation with a couple candidate models. I didn't include the list here for the sake of brevity but I picked variable combinations using domain knowledge and an AIC search and then used cross-validation to highlight the best candidates and ended up with these ones. Next I experimented with random effects to attempt to account for the differences in a players current team and the team they play for in the following season.Random effects provided decent gains for the assist per 90 model and made predictions worse in the goals per 90 model. I also found that accounting for the team using a random slope and coefficient was the most beneficial for the assist per 90 model.  To test if mixed effects improved the models for players that transferred (changed teams) across the season pair. I performed an additional round of cross-validation on that subset. The results were similar, assists per 90 sees a performance boost on the subset and goals per 90 performs worse with mixed effects on the subset as well. Next I added the FIFA data set to see if a "scouting report" going into the new season would improve predictions using player attributes which were provided as integers on a scale between 1 and 99. I transformed them as x-1/98 to be between 0 and 1. I performed a bit of experimentation when selecting FIFA variables and found assists per 90 gained the most predictive accuracy with summary averages like passing, physicality, and pace. Goals per 90 improved with more detailed stats like finishing, positioning, volleys, among others. The FIFA models I fit were:  
+
+goals_p_90_next ~
+  goals_p_90_current +
+  age_current +
+  comp_current +
+  pos_current +
+  comp_next +
+  exp_npg_p_90_current +
+  shots_p_90_current +
+  mins_current +
+  finishing +
+  positioning +
+  shot_power +
+  volleys +
+  heading_accuracy +
+  ball_control +
+  reactions +
+  composure +
+  balance +
+  jumping +
+  long_shots  
+  
+and  
+assists_p_90_next ~
+  assists_p_90_current +
+  age_current +
+  pos_current +
+  shot_creating_actions_p_90_current +
+  progressive_passes_p_90_current +
+  carries_final_3rd_p_90_current +
+  carries_penalty_area_p_90_current +
+  stk_p_90_current +
+  mins_current +
+  + comp_current + comp_next + 
+  (1 | squad_next) + (0 + assists_p_90_current | squad_next) +
+  pace +
+  passing +
+  dribbling +
+  physicality
+
+Lastly, I compared the best linear models to General Additive Models which allows non-linear relationships between predictors and the response variables. I used 5 fold cross-validation here as the GAM model took very with LOOCV when attempting to render. The additive models allow some predictors to be interpreted as a non-linear function giving flexibility in the relationship. The additive model's I fitted were:  
+goals_p_90_next ~
+s(goals_p_90_current, k = 3) + age_current + pos_current + s(exp_npg_p_90_current, k = 5) + s(shots_p_90_current, k=3) + mins_current + s(finishing, k=5)  
+
+and  
+
+ assists_p_90_next ~
+  s(assists_p_90_current, k = 8) + s(age_current, k = 6) + pos_current + s(shot_creating_actions_p_90_current, k = 8) + s(carries_final_3rd_p_90_current, k=8) + s(stk_p_90_current, k=8) + s(mins_current, k=8) + pace + passing + physicality + comp_current + comp_next
+
+```{r, echo=FALSE, warning=FALSE}
+grouped_cv_model <- function(data, formula, model, v = length(sample(unique(data$cv_group)))) {
+  data <- data %>% mutate(cv_group = paste(season_pair, comp_current, comp_next, sep = "___"))
+  groups <- sample(unique(data$cv_group))
+  v <- min(v, length(groups))
+  group_map <- data.frame(cv_group = groups,fold = rep(1:v, length.out = length(groups)))
+  data <- left_join(data, group_map, by = "cv_group")
+
+  response_var <- all.vars(formula)[1]
+
+  results <- lapply(sort(unique(data$fold)), function(k) {
+    test_idx <- which(data$fold == k)
+    train_idx <- which(data$fold != k)
+
+    train_data <- data[train_idx, , drop = FALSE]
+    test_data  <- data[test_idx, , drop = FALSE]
+
+    fit <- model(formula, train_data)
+
+    preds <- tryCatch(
+      predict(fit, newdata = test_data, type = "response"),
+      error = function(e) predict(fit, newdata = test_data)
+    )
+
+    actual <- test_data[[response_var]]
+
+    rmse <- sqrt(mean((actual - preds)^2, na.rm = TRUE))
+    mae  <- mean(abs(actual - preds), na.rm = TRUE)
+
+    rm(fit, preds, train_data, test_data)
+    gc()
+
+    data.frame(fold = k, rmse = rmse, mae = mae)
+  })
+
+  do.call(rbind, results)
+}
+```
+
+ 
+
+```{r, echo=FALSE, warning=FALSE}
+grouped_cv_model <- function(data, formula, model, v = length(sample(unique(data$cv_group)))) {
+  data <- data %>% mutate(cv_group = paste(season_pair, comp_current, comp_next, sep = "___"))
+
+  groups <- sample(unique(data$cv_group))
+  v <- min(v, length(groups))
+
+  group_map <- data.frame(cv_group = groups,fold = rep(1:v, length.out = length(groups)))
+
+  data <- left_join(data, group_map, by = "cv_group")
+
+  response_var <- all.vars(formula)[1]
+
+  results <- lapply(sort(unique(data$fold)), function(k) {
+    test_idx <- which(data$fold == k)
+    train_idx <- which(data$fold != k)
+
+    train_data <- data[train_idx, , drop = FALSE]
+    test_data  <- data[test_idx, , drop = FALSE]
+
+    fit <- model(formula, train_data)
+
+    preds <- tryCatch(
+      predict(fit, newdata = test_data, type = "response", allow.new.levels = TRUE),
+      error = function(e1) tryCatch(
+        predict(fit, newdata = test_data, allow.new.levels = TRUE),
+        error = function(e2) tryCatch(
+          predict(fit, newdata = test_data, type = "response"),
+          error = function(e3) predict(fit, newdata = test_data)
+        )
+      )
+    )
+
+    actual <- test_data[[response_var]]
+
+    rmse <- sqrt(mean((actual - preds)^2, na.rm = TRUE))
+    mae  <- mean(abs(actual - preds), na.rm = TRUE)
+
+    rm(fit, preds, train_data, test_data)
+    gc()
+
+    data.frame(fold = k, rmse = rmse, mae = mae)
+  })
+
+  do.call(rbind, results)
+}
+```
+
+```{r, echo=FALSE, warning=FALSE}
+lmer_fit <- function(formula, data) {
+  lme4::lmer(
+    formula,
+    data = data,
+    control = lme4::lmerControl(check.rankX = "message+drop.cols")
+  )
+}
+cv_goals_fixed <- grouped_cv_model(
+  data = model_fifa_df_clean,
+  formula = goals_p_90_next ~
+  goals_p_90_current  + age_current + comp_current + pos_current + comp_next +
+  exp_npg_p_90_current + shots_p_90_current + mins_current,
+  model = lm
+) %>% dplyr::mutate(model_name = "Goals Fixed")
+
+cv_goals_mixed <- grouped_cv_model(
+  data = model_fifa_df_clean,
+  formula = goals_p_90_next ~
+  goals_p_90_current +
+  + age_current + comp_current + pos_current + comp_next +
+  exp_npg_p_90_current + shots_p_90_current + mins_current + (1 | squad_next) + (0 + goals_p_90_current | squad_next),
+  model = lmer_fit
+) %>% dplyr::mutate(model_name = "Goals Mixed")
+
+cv_mixed_compare <- dplyr::bind_rows(cv_goals_fixed, cv_goals_mixed)
+ggplot(cv_mixed_compare, aes(x = factor(fold), y = rmse, color = model_name, group = model_name)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  labs(title = "Cross-Validation RMSE Across Folds", x = NULL, y = "RMSE", color = "Model") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+cv_mixed_compare %>%
+  dplyr::group_by(model_name) %>%
+  dplyr::summarise(mean_rmse = mean(rmse, na.rm = TRUE),var_rmse = var(rmse, na.rm = TRUE),.groups = "drop") %>%
+  dplyr::arrange(mean_rmse) %>% kable()
+```
+
+
+```{r, echo=FALSE, warning=FALSE}
+
+cv_assists_fixed <- grouped_cv_model(
+  data = model_fifa_df_clean,
+  formula = assists_p_90_next ~
+  assists_p_90_current +
+  age_current +
+  comp_current +
+  pos_current +
+  comp_next +
+  shot_creating_actions_p_90_current +
+  progressive_passes_p_90_current +
+  carries_final_3rd_p_90_current +
+  carries_penalty_area_p_90_current +
+  stk_p_90_current +
+  mins_current,
+  model = lm
+) %>% dplyr::mutate(model_name = "Assists Fixed")
+
+cv_assists_mixed <- grouped_cv_model(
+  data = model_fifa_df_clean,
+  formula = assists_p_90_next ~ assists_p_90_current +
+  age_current +
+  pos_current +
+  shot_creating_actions_p_90_current +
+  progressive_passes_p_90_current +
+  carries_final_3rd_p_90_current +
+  carries_penalty_area_p_90_current +
+  stk_p_90_current +
+  mins_current +
+  + comp_current + comp_next + 
+  (1 | squad_next) + (0 + assists_p_90_current | squad_next),
+  model = lmer_fit
+) %>% dplyr::mutate(model_name = "Assists Mixed")
+
+cv_mixed_compare <- dplyr::bind_rows(
+  cv_assists_fixed,
+  cv_assists_mixed
+)
+
+ggplot(cv_mixed_compare, aes(x = factor(fold), y = rmse, color = model_name, group = model_name)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  labs(title = "Cross-Validation RMSE Across Folds", x = NULL, y = "RMSE", color = "Model") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+cv_mixed_compare %>%
+  dplyr::group_by(model_name) %>%
+  dplyr::summarise(mean_rmse = mean(rmse, na.rm = TRUE),var_rmse = var(rmse, na.rm = TRUE),.groups = "drop") %>%
+  dplyr::arrange(mean_rmse) %>% kable()
+```
+```{r, echo=FALSE, warning=FALSE}
+goals_transfer_df <- model_fifa_df_clean %>% filter(squad_next != squad_current)
+
+assists_transfer_df <- model_fifa_df_clean %>% filter(squad_next != squad_current)
+
+cv_goals_fixed <- grouped_cv_model(
+  data = model_fifa_df_clean ,
+  formula = goals_p_90_next ~
+  goals_p_90_current  + age_current + comp_current + pos_current + comp_next +
+  exp_npg_p_90_current + shots_p_90_current + mins_current,
+  model = lm
+) %>% dplyr::mutate(model_name = "Goals Fixed")
+
+cv_goals_mixed <- grouped_cv_model(
+  data = model_fifa_df_clean,
+  formula = goals_p_90_next ~
+  goals_p_90_current +
+  + age_current + comp_current + pos_current + comp_next +
+  exp_npg_p_90_current + shots_p_90_current + mins_current + (1 | squad_next) + (0 + goals_p_90_current | squad_next),
+  model = lmer_fit
+) %>% dplyr::mutate(model_name = "Goals Mixed")
+
+cv_assists_fixed <- grouped_cv_model(
+  data = model_fifa_df_clean ,
+  formula = assists_p_90_next ~
+  assists_p_90_current +
+  age_current +
+  comp_current +
+  pos_current +
+  comp_next +
+  shot_creating_actions_p_90_current +
+  progressive_passes_p_90_current +
+  carries_final_3rd_p_90_current +
+  carries_penalty_area_p_90_current +
+  stk_p_90_current +
+  mins_current,
+  model = lm
+) %>% dplyr::mutate(model_name = "Assists Fixed")
+
+cv_assists_mixed <- grouped_cv_model(
+  data = model_fifa_df_clean,
+  formula = assists_p_90_next ~ assists_p_90_current +
+  age_current +
+  pos_current +
+  shot_creating_actions_p_90_current +
+  progressive_passes_p_90_current +
+  carries_final_3rd_p_90_current +
+  carries_penalty_area_p_90_current +
+  stk_p_90_current +
+  mins_current +
+  + comp_current + comp_next + 
+  (1 | squad_next) + (0 + assists_p_90_current | squad_next),
+  model = lmer_fit
+) %>% dplyr::mutate(model_name = "Assists Mixed")
+
+cv_mixed_compare <- dplyr::bind_rows(
+  cv_goals_fixed,
+  cv_goals_mixed,
+  cv_assists_fixed,
+  cv_assists_mixed
+)
+
+ggplot(cv_mixed_compare, aes(x = factor(fold), y = rmse, color = model_name, group = model_name)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  labs(title = "Cross-Validation RMSE Across Folds", x = NULL, y = "RMSE", color = "Model") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+cv_mixed_compare %>%
+  dplyr::group_by(model_name) %>%
+  dplyr::summarise(
+    mean_rmse = mean(rmse, na.rm = TRUE),
+    var_rmse = var(rmse, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(mean_rmse) %>% kable()
+```
+```{r, echo=FALSE, warning=FALSE}
+f_assists_mixed_fifa <- assists_p_90_next ~
+  assists_p_90_current +
+  age_current +
+  pos_current +
+  shot_creating_actions_p_90_current +
+  progressive_passes_p_90_current +
+  carries_final_3rd_p_90_current +
+  carries_penalty_area_p_90_current +
+  stk_p_90_current +
+  mins_current +
+  + comp_current + comp_next + 
+  (1 | squad_next) + (0 + assists_p_90_current | squad_next) +
+  pace +
+  passing +
+  dribbling +
+  physicality
+
+f_goals_fixed_fifa <- goals_p_90_next ~
+  goals_p_90_current +
+  age_current +
+  comp_current +
+  pos_current +
+  comp_next +
+  exp_npg_p_90_current +
+  shots_p_90_current +
+  mins_current +
+  finishing +
+  positioning +
+  shot_power +
+  volleys +
+  heading_accuracy +
+  ball_control +
+  reactions +
+  composure +
+  balance +
+  jumping +
+  long_shots
+```
+
+
+```{r, echo=FALSE, warning=FALSE}
+
+cv_goals_fixed_fifa <- grouped_cv_model(
+  data = model_fifa_df_clean,
+  formula = f_goals_fixed_fifa,
+  model = lm
+) %>% mutate(model_name = "Goals Fixed + FIFA")
+
+cv_assists_mixed_fifa <- grouped_cv_model(
+  data = model_fifa_df_clean,
+  formula = f_assists_mixed_fifa,
+  model = lmer
+) %>% mutate(model_name = "Assists Mixed + FIFA")
+
+cv_fifa_compare <- bind_rows(
+  cv_goals_fixed,
+  cv_goals_fixed_fifa,
+  cv_assists_mixed,
+  cv_assists_mixed_fifa,
+)
+
+cv_fifa_compare %>%
+  dplyr::group_by(model_name) %>%
+  dplyr::summarise(
+    mean_rmse = mean(rmse, na.rm = TRUE),
+    var_rmse = var(rmse, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(mean_rmse) %>% kable()
+```
+
+```{r, echo=FALSE, warning=FALSE}
+
+ggplot(cv_fifa_compare, aes(x = factor(fold), y = rmse, color = model_name, group = model_name)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  labs(title = "Cross-Validation RMSE Across Folds", x = NULL, y = "RMSE", color = "Model") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+cv_fifa_compare %>%
+  dplyr::group_by(model_name) %>%
+  dplyr::summarise(
+    mean_rmse = mean(rmse, na.rm = TRUE),
+    var_rmse = var(rmse, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(mean_rmse) %>% kable()
+```
+```{r, echo=FALSE, warning=FALSE}
+f_goals_gam <- goals_p_90_next ~
+s(goals_p_90_current, k = 3) + age_current + pos_current + s(exp_npg_p_90_current, k = 5) + s(shots_p_90_current, k=3) + mins_current + s(finishing, k=5)+comp_current + comp_next
+
+f_assists_gam <- assists_p_90_next ~
+  s(assists_p_90_current, k = 8) + s(age_current, k = 6) + pos_current + s(shot_creating_actions_p_90_current, k = 8) + s(carries_final_3rd_p_90_current, k=8) + s(stk_p_90_current, k=8) + s(mins_current, k=8) + pace + passing + physicality + comp_current + comp_next
+```
+
+
+```{r, echo=FALSE, warning=FALSE}
+
+grouped_cv_gam <- function(data, formula, v = length(sample(unique(data$cv_group)))) {
+  data <- data %>%
+    mutate(cv_group = paste(season_pair, comp_current, comp_next, sep = "___"))
+
+  groups <- sample(unique(data$cv_group))
+  v <- min(v, length(groups))
+
+  group_map <- data.frame(
+    cv_group = groups,
+    fold = rep(1:v, length.out = length(groups))
+  )
+
+  data <- left_join(data, group_map, by = "cv_group")
+
+  response_var <- all.vars(formula)[1]
+
+  results <- lapply(sort(unique(data$fold)), function(k) {
+    train_data <- data[data$fold != k, , drop = FALSE]
+    test_data  <- data[data$fold == k, , drop = FALSE]
+
+    fit <- mgcv::gam(
+      formula,
+      data = train_data,
+      method = "REML",
+      select = TRUE
+    )
+
+    preds <- as.numeric(predict(fit, newdata = test_data, type = "response"))
+    actual <- test_data[[response_var]]
+
+    data.frame(
+      fold = k,
+      rmse = sqrt(mean((actual - preds)^2, na.rm = TRUE))
+    )
+  })
+
+  bind_rows(results)
+}
+
+cv_goals_gam <- grouped_cv_gam(
+  data = model_fifa_df_clean,
+  formula = f_goals_gam, v=5
+) %>% mutate(model_name = "Goals GAM")
+
+cv_assists_gam <- grouped_cv_gam(
+  data = model_fifa_df_clean,
+  formula = f_assists_gam, v=5
+) %>% mutate(model_name = "Assists GAM")
+
+cv_goals_fixed_fifa <- grouped_cv_model(
+  data = model_fifa_df_clean,
+  formula = f_goals_fixed_fifa,
+  model = lm, v=5
+) %>% mutate(model_name = "Goals Fixed + FIFA")
+
+cv_assists_mixed_fifa <- grouped_cv_model(
+  data = model_fifa_df_clean,
+  formula = f_assists_mixed_fifa,
+  model = lmer, v=5
+) %>% mutate(model_name = "Assists Mixed + FIFA")
+
+
+cv_strategy_compare <- bind_rows(cv_goals_fixed_fifa, cv_goals_gam, cv_assists_mixed_fifa, cv_assists_gam)
+
+ggplot(cv_strategy_compare, aes(x = factor(fold), y = rmse, color = model_name, group = model_name)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  labs(title = "Cross-Validation RMSE Across Folds", x = NULL, y = "RMSE", color = "Model") +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+cv_strategy_compare %>%
+  dplyr::group_by(model_name) %>%
+  dplyr::summarise(
+    mean_rmse = mean(rmse, na.rm = TRUE),
+    var_rmse = var(rmse, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(mean_rmse) %>% kable()
+```
+**Results - Christian Emmanuel**   
+Below are the plots of the non-linear parameters in the goals per 90 model. Each plot shows the non-linear partial effect of the variables that were plotted with a smoother. The dashed lines provide a confidence band. I observed that many of the predictors were much better represented in this form as it allowed for more dynamic effects and different values.  Some of the predictors like goals per 90 in the current season, non-penalty expected goals in the current season, and finishing have relationships with the predictor that can't be replicated in a linear form without losing information. We have similar results for the assist model as shot creating actions per 90, carries into the final 3rd per 90, and successful takeons per 90 are all extremely non-linear and this model accommodates the non-linear relationship. To understand the effect going from one league to another has on the models, I held all other predictors fixed and fit predictions for a typical player (from the data set) transferring from one league to another. I also measured uncertainty for the mean predictions by redrawing from the fitted coefficient covariance matrix ten thousand times as traditional parametric bootstrapping with refitting was extremely slow with the General Additive Model. Finally to better understand the merits and limits of this model I trained it on a subset of players from the 20/21 season to 23/24 season who transferred between teams, had a goal and assist in one of the two campaigns, and played as a forward or midfielder. I then tested the model on the same subset from the 24/25 season. The plots below show that both models under predict the performances of outliers significantly. I compiled a table of the top 10 outliers from each model to find out why (They can be found in the Appendix). The goals per 90 model has mostly players who over-performed as the largest outliers there are some examples like Dani Olmo, Assane Diao, and Kylian Mbappe where they are just better than model expected at their new team. However there are cases like Andre Silva and Youssoufa Moukoko where the player had limited minutes in one or both of the seasons so their output was unrepresentative in the following season. This shows that predicting per 90 metrics is meaningful but only with the context of player availability and usage at their new team. The assists per 90 model is similar where there are players like Micheal Olise and Neal Maupay who performed exceeding well at their new clubs and exceeding the models predictions based on the previous season's stats. There are also players like Rodri and Ansu Fati who under performed due to a lack of minutes. For Rodri and Ansu Fati this was due to injury.
+
+
+```{r, echo=FALSE, warning=FALSE}
+
+m_goals_gam <- gam(f_goals_gam, data = model_fifa_df_clean, method = "REML",select = TRUE)
+
+m_assists_gam <- gam(f_assists_gam, data = model_fifa_df_clean, method = "REML",select = TRUE)
+plot(m_goals_gam, pages = 5, shade = FALSE, residuals = FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE}
+plot(m_assists_gam, pages = 7, shade = FALSE, residuals = FALSE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE}
+
+get_mode <- function(x) {
+  x <- x[!is.na(x)]
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+model_fifa_df_clean <- model_fifa_df_clean %>%
+  mutate(
+    comp_current = factor(comp_current),
+    comp_next = factor(comp_next)
+  )
+
+typical_row <- model_fifa_df_clean %>%
+  summarise(
+    across(where(is.numeric), ~ median(.x, na.rm = TRUE)),
+    across(where(is.factor), ~ get_mode(.x)),
+    across(where(is.character), ~ get_mode(.x))
+  ) %>%
+  mutate(
+    comp_current = factor(comp_current, levels = levels(model_fifa_df_clean$comp_current)),
+    comp_next = factor(comp_next, levels = levels(model_fifa_df_clean$comp_next))
+  )
+
+comp_grid <- expand_grid(
+  comp_current = levels(model_fifa_df_clean$comp_current),
+  comp_next = levels(model_fifa_df_clean$comp_next)
+) %>%
+  mutate(
+    comp_current = factor(comp_current, levels = levels(model_fifa_df_clean$comp_current)),
+    comp_next = factor(comp_next, levels = levels(model_fifa_df_clean$comp_next))
+  )
+
+
+newdata <- typical_row[rep(1, nrow(comp_grid)), ]
+
+newdata$comp_current <- comp_grid$comp_current
+newdata$comp_next <- comp_grid$comp_next
+
+league_effect_preds <- newdata %>%
+  mutate(
+    pred_goals_p_90_next = predict(
+      m_goals_gam,
+      newdata = newdata,
+      type = "response"
+    ),
+    pred_assists_p_90_next = predict(
+      m_assists_gam,
+      newdata = newdata,
+      type = "response"
+    )
+  ) %>%
+  dplyr::select(
+    comp_current,
+    comp_next,
+    pred_goals_p_90_next,
+    pred_assists_p_90_next
+  )
+
+league_effect_long <- league_effect_preds %>%
+  pivot_longer(
+    cols = c(pred_goals_p_90_next, pred_assists_p_90_next),
+    names_to = "target",
+    values_to = "prediction"
+  ) %>%
+  mutate(
+    target = recode(
+      target,
+      pred_goals_p_90_next = "Predicted Goals per 90 Next Season",
+      pred_assists_p_90_next = "Predicted Assists per 90 Next Season"
+    )
+  )
+```
+```{r, echo=FALSE, warning=FALSE}
+fast_gam_prediction_ci <- function(model, newdata, target_label, B = 10000) {
+  beta_hat <- coef(model)
+  V_beta <- vcov(model)
+  beta_draws <- MASS::mvrnorm(n = B, mu = beta_hat,Sigma = V_beta)
+  Xp <- predict(
+    model,
+    newdata = newdata,
+    type = "lpmatrix"
+  )
+  pred_mat <- Xp %*% t(beta_draws)
+  
+  as_tibble(pred_mat) %>%
+    mutate(row_id = row_number()) %>%
+    pivot_longer(
+      cols = -row_id,
+      names_to = "boot",
+      values_to = "prediction"
+    ) %>%
+    left_join(
+      newdata %>%
+        dplyr::select(comp_current, comp_next) %>%
+        mutate(row_id = row_number()),
+      by = "row_id"
+    ) %>%
+    mutate(
+      prediction = pmax(prediction, 0),
+      target = target_label
+    )
+}
+goal_boot_fast <- fast_gam_prediction_ci(
+  model = m_goals_gam,
+  newdata = newdata,
+  target_label = "Predicted Goals per 90 Next Season"
+)
+
+assist_boot_fast <- fast_gam_prediction_ci(
+  model = m_assists_gam,
+  newdata = newdata,
+  target_label = "Predicted Assists per 90 Next Season"
+)
+
+goals_boot <- goal_boot_fast %>%
+  group_by(target, comp_current, comp_next) %>%
+  summarise(
+    mean = mean(prediction, na.rm = TRUE),
+    lower = quantile(prediction, 0.025, na.rm = TRUE),
+    upper = quantile(prediction, 0.975, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = paste0(
+      round(mean, 2),
+      "\n[",
+      round(lower, 2),
+      ", ",
+      round(upper, 2),
+      "]"
+    )
+  )
+
+
+assist_boot <- assist_boot_fast %>%
+  group_by(target, comp_current, comp_next) %>%
+  summarise(
+    mean = mean(prediction, na.rm = TRUE),
+    lower = quantile(prediction, 0.025, na.rm = TRUE),
+    upper = quantile(prediction, 0.975, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = paste0(
+      round(mean, 2),
+      "\n[",
+      round(lower, 2),
+      ", ",
+      round(upper, 2),
+      "]"
+    )
+  )
+
+
+ggplot(
+  goals_boot,
+  aes(
+    x = comp_next,
+    y = comp_current,
+    fill = mean
+  )
+) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = label), size = 3) +
+  labs(
+    title = "Typical Player Cross-League Predictions with GAM Uncertainty Intervals",
+    x = "Next Season League",
+    y = "Current Season League",
+    fill = "Prediction"
+  )
+
+ggplot(
+  assist_boot,
+  aes(
+    x = comp_next,
+    y = comp_current,
+    fill = mean
+  )
+) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = label), size = 3) +
+  labs(
+    title = "Typical Player Cross-League Predictions with GAM Uncertainty Intervals",
+    x = "Next Season League",
+    y = "Current Season League",
+    fill = "Prediction"
+  )
+```
+
+
+```{r, echo=FALSE, warning=FALSE}
+test_split <- "23/24_24/25"
+
+train_df <- model_fifa_df %>%
+  filter(season_pair != test_split, comp_current != comp_next, goals_assists_current != 0 | goals_assists_next !=0, pos_current != "DF", mins_next > 0)
+
+test_transfers_df <- model_fifa_df %>%
+  filter(
+    season_pair == test_split,
+    comp_current != comp_next, goals_current != 0, goals_assists_current != 0 | goals_assists_next !=0, pos_current != "DF", mins_next > 0)
+
+m_goals_gam_deploy <- gam(
+  f_goals_gam,
+  data = train_df,
+  method = "REML",
+  select = TRUE
+)
+
+m_assists_gam_deploy <- gam(
+  f_assists_gam,
+  data = train_df,
+  method = "REML",
+  select = TRUE
+)
+
+transfer_preds <- test_transfers_df %>%
+  mutate(
+    pred_goals_p_90_next = predict(
+      m_goals_gam_deploy,
+      newdata = test_transfers_df,
+      type = "response"
+    ),
+    pred_assists_p_90_next = predict(
+      m_assists_gam_deploy,
+      newdata = test_transfers_df,
+      type = "response"
+    ),
+    
+    goals_error = goals_p_90_next - pred_goals_p_90_next,
+    assists_error = assists_p_90_next - pred_assists_p_90_next,
+    
+    abs_goals_error = abs(goals_error),
+    abs_assists_error = abs(assists_error),
+    
+    transfer_label = paste0(player_current, "\n", comp_current, " → ", comp_next)
+  )
+
+goals_metrics <- transfer_preds %>%
+  summarise(
+    target = "Goals per 90",
+    n = sum(!is.na(goals_p_90_next) & !is.na(pred_goals_p_90_next)),
+    rmse = sqrt(mean((goals_p_90_next - pred_goals_p_90_next)^2, na.rm = TRUE)),
+    mae = mean(abs(goals_p_90_next - pred_goals_p_90_next), na.rm = TRUE),
+    bias = mean(goals_p_90_next - pred_goals_p_90_next, na.rm = TRUE),
+    cor_actual_pred = cor(goals_p_90_next, pred_goals_p_90_next, use = "complete.obs")
+  )
+
+assists_metrics <- transfer_preds %>%
+  summarise(
+    target = "Assists per 90",
+    n = sum(!is.na(assists_p_90_next) & !is.na(pred_assists_p_90_next)),
+    rmse = sqrt(mean((assists_p_90_next - pred_assists_p_90_next)^2, na.rm = TRUE)),
+    mae = mean(abs(assists_p_90_next - pred_assists_p_90_next), na.rm = TRUE),
+    bias = mean(assists_p_90_next - pred_assists_p_90_next, na.rm = TRUE),
+    cor_actual_pred = cor(assists_p_90_next, pred_assists_p_90_next, use = "complete.obs")
+  )
+
+deployment_metrics <- bind_rows(goals_metrics, assists_metrics)
+
+transfer_preds_long <- transfer_preds %>%
+  dplyr::select(
+    player_current,
+    mins_next,
+    pred_goals_p_90_next,
+    goals_p_90_next,
+    pred_assists_p_90_next,
+    assists_p_90_next
+  ) %>%
+  pivot_longer(
+    cols = c(
+      pred_goals_p_90_next,
+      goals_p_90_next,
+      pred_assists_p_90_next,
+      assists_p_90_next
+    ),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(
+    output_type = case_when(
+      str_detect(metric, "goals") ~ "Goals per 90",
+      str_detect(metric, "assists") ~ "Assists per 90"
+    ),
+    value_type = case_when(
+      str_detect(metric, "^pred") ~ "Predicted",
+      TRUE ~ "Actual"
+    )
+  ) %>%
+  dplyr::select(
+    player_current,
+    mins_next,
+    output_type,
+    value_type,
+    value
+  ) %>%
+  pivot_wider(
+    names_from = value_type,
+    values_from = value
+  ) %>%
+  mutate(
+    Error = Actual - Predicted,
+    performance_group = case_when(
+      Error > 0 ~ "Overperformed",
+      Error < 0 ~ "Underperformed",
+      TRUE ~ "Exact prediction"
+    )
+  )
+
+ggplot(
+  transfer_preds_long %>% filter(output_type == "Goals per 90"),
+  aes(
+    x = Predicted,
+    y = Actual,
+    color = performance_group
+  )
+) +
+  geom_point(alpha = 0.7, size = 2.3) +
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed"
+  ) +
+  scale_color_manual(
+    values = c(
+      "Overperformed" = "green3",
+      "Underperformed" = "gold",
+      "Exact prediction" = "gray50"
+    )
+  ) +
+  labs(
+    title = "GAM Goal Predictions for 2023/24 → 2024/25 Transfers",
+    x = "Predicted goals per 90",
+    y = "Actual goals per 90",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+
+ggplot(
+  transfer_preds_long %>% filter(output_type == "Assists per 90"),
+  aes(
+    x = Predicted,
+    y = Actual,
+    color = performance_group
+  )
+) +
+  geom_point(alpha = 0.7, size = 2.3) +
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed"
+  ) +
+  scale_color_manual(
+    values = c(
+      "Overperformed" = "green3",
+      "Underperformed" = "gold",
+      "Exact prediction" = "gray50"
+    )
+  ) +
+  labs(
+    title = "GAM Assist Predictions for 2023/24 → 2024/25 Transfers",
+    x = "Predicted assists per 90",
+    y = "Actual assists per 90",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+ggplot(
+  transfer_preds_long %>% filter(output_type == "Goals per 90"),
+  aes(
+    x = Predicted,
+    y = Error,
+    color = performance_group
+  )
+) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed"
+  ) +
+  geom_point(alpha = 0.7, size = 2.3) +
+  scale_color_manual(
+    values = c(
+      "Overperformed" = "green3",
+      "Underperformed" = "gold",
+      "Exact prediction" = "gray50"
+    )
+  ) +
+  labs(
+    title = "Goal Prediction Errors for 2023/24 → 2024/25 Transfers",
+    x = "Predicted goals per 90",
+    y = "Actual - Predicted",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+ggplot(
+  transfer_preds_long %>% filter(output_type == "Assists per 90"),
+  aes(
+    x = Predicted,
+    y = Error,
+    color = performance_group
+  )
+) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed"
+  ) +
+  geom_point(alpha = 0.7, size = 2.3) +
+  scale_color_manual(
+    values = c(
+      "Overperformed" = "green3",
+      "Underperformed" = "gold",
+      "Exact prediction" = "gray50"
+    )
+  ) +
+  labs(
+    title = "Assist Prediction Errors for 2023/24 → 2024/25 Transfers",
+    x = "Predicted assists per 90",
+    y = "Actual - Predicted",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+
+goals_case_table <- transfer_preds %>%
+  dplyr::select(
+    player_current,
+    squad_current,
+    squad_next,
+    comp_current,
+    comp_next,
+    pos_current,
+    mins_next,
+    actual_goals_p_90 = goals_p_90_next,
+    pred_goals_p_90 = pred_goals_p_90_next,
+    goals_error,
+    abs_goals_error
+  ) %>%
+  arrange(desc(abs_goals_error))
+
+assists_case_table <- transfer_preds %>%
+  dplyr::select(
+    player_current,
+    squad_current,
+    squad_next,
+    comp_current,
+    comp_next,
+    pos_current,
+    mins_next,
+    actual_assists_p_90 = assists_p_90_next,
+    pred_assists_p_90 = pred_assists_p_90_next,
+    assists_error,
+    abs_assists_error
+  ) %>%
+  arrange(desc(abs_assists_error))
+
+report_table <- transfer_preds %>%
+  dplyr::select(
+    player_current,
+    squad_current,
+    squad_next,
+    comp_current,
+    comp_next,
+    pos_current,
+    mins_next,
+    actual_goals_p_90 = goals_p_90_next,
+    pred_goals_p_90 = pred_goals_p_90_next,
+    goals_error,
+    actual_assists_p_90 = assists_p_90_next,
+    pred_assists_p_90 = pred_assists_p_90_next,
+    assists_error
+  ) %>%
+  mutate(
+    across(
+      c(
+        actual_goals_p_90,
+        pred_goals_p_90,
+        goals_error,
+        actual_assists_p_90,
+        pred_assists_p_90,
+        assists_error
+      ),
+      ~ round(.x, 3)
+    )
+  ) %>%
+  arrange(desc(abs(goals_error) + abs(assists_error)))
+```
+
+\newpage  
+
+
+```{r, echo=FALSE, warning=FALSE}
+join_keys <- c("player_id", "season_pair")
+
+raw_numeric_cols <- intersect(
+  names(model_df)[sapply(model_df, is.numeric)],
+  names(transfer_preds)[sapply(transfer_preds, is.numeric)]
+)
+
+cols_to_replace <- setdiff(
+  raw_numeric_cols,
+  c(
+    "player_id",
+    "fold",
+    "cv_group",
+    "pred_goals_p_90_next",
+    "pred_assists_p_90_next",
+    "se_goals_p_90_next",
+    "se_assists_p_90_next",
+    "goals_lower",
+    "goals_upper",
+    "assists_lower",
+    "assists_upper",
+    "goals_error",
+    "goals_abs_error",
+    "assists_error",
+    "assists_abs_error",
+    "ga_p_90_next_actual",
+    "ga_p_90_next_pred",
+    "ga_error",
+    "ga_abs_error"
+  )
+)
+
+raw_replacements <- model_df %>%
+  dplyr::select(
+    all_of(join_keys),
+    all_of(cols_to_replace)
+  ) %>%
+  distinct()
+
+transfer_preds <- transfer_preds %>%
+  left_join(
+    raw_replacements,
+    by = join_keys,
+    suffix = c("", "_raw")
+  )
+
+for (var in cols_to_replace) {
+  raw_var <- paste0(var, "_raw")
+  
+  if (raw_var %in% names(transfer_preds)) {
+    transfer_preds[[var]] <- coalesce(
+      transfer_preds[[raw_var]],
+      transfer_preds[[var]]
+    )
+  }
+}
+
+transfer_preds <- transfer_preds %>%
+  dplyr::select(-ends_with("_raw"))
+
+transfer_preds <- transfer_preds %>%
+  mutate(
+    goals_error = goals_p_90_next - pred_goals_p_90_next,
+    goals_abs_error = abs(goals_error),
+    
+    assists_error = assists_p_90_next - pred_assists_p_90_next,
+    assists_abs_error = abs(assists_error),
+    
+    ga_p_90_next_actual = goals_p_90_next + assists_p_90_next,
+    ga_p_90_next_pred = pred_goals_p_90_next + pred_assists_p_90_next,
+    ga_error = ga_p_90_next_actual - ga_p_90_next_pred,
+    ga_abs_error = abs(ga_error)
+  )
+
+goal_outliers <- transfer_preds %>%
+  mutate(
+    goals_error = goals_p_90_next - pred_goals_p_90_next,
+    goals_abs_error = abs(goals_error),
+    outlier_type = case_when(
+      goals_error > 0 ~ "Overperformed",
+      goals_error < 0 ~ "Underperformed",
+      TRUE ~ "Exact prediction"
+    )
+  ) %>%
+  arrange(desc(goals_abs_error)) %>%
+  dplyr::select(
+    player_current,
+    squad_current,
+    squad_next,
+    goals_p_90_next,
+    goals_error,
+    mins_current,
+    mins_next
+  ) %>%
+  slice_head(n = 10)
+
+assist_outliers <- transfer_preds %>%
+  mutate(
+    assists_error = assists_p_90_next - pred_assists_p_90_next,
+    assists_abs_error = abs(assists_error),
+    outlier_type = case_when(
+      assists_error > 0 ~ "Overperformed",
+      assists_error < 0 ~ "Underperformed",
+      TRUE ~ "Exact prediction"
+    )
+  ) %>%
+  arrange(desc(assists_abs_error)) %>%
+  dplyr::select(
+    player_current,
+    squad_current,
+    squad_next,
+    assists_p_90_next,
+    assists_error,
+    mins_current,
+    mins_next
+  ) %>%
+  slice_head(n = 10)
+
+kable(goal_outliers)
+kable(assist_outliers)
+```
+
+

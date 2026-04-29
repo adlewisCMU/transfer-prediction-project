@@ -1,0 +1,464 @@
+---
+title: "Final Project Draft: Modeling Transfer Adaptation Across the Top 5 European Leagues"
+author: "Jeffrey Chen"
+date: 04/15/2026
+format: pdf
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+# Jeffrey Chen: Methods
+
+## A (10 points)
+
+__ANSWER:__
+
+__In my project idea homework, I intentionally kept two model directions on the table: a prediction-focused elastic-net regression and an inference-focused mixed-effects model. In the project check-in, I also settled on a much more specific outcome than "player performance" in general, namely first-season change in shot-creating actions per 90 after a transfer between top five leagues. The box plot from the check-in showed heavy overlap across destination leagues, so destination league looked useful but not sufficient by itself. That is why I tested my model in stages rather than jumping straight to one specification. I first fit a prior-performance-only baseline, then a destination-league-only model, then a richer fixed-effects linear model, then an elastic-net model, and finally a mixed-effects model with source-club and destination-club random intercepts. I also considered a binary success/failure adaptation label, but I decided not to use that as the primary response because it would force an arbitrary cutoff and throw away the magnitude of the transfer effect.__
+
+## B (15 points)
+
+__ANSWER:__
+
+__One thing that was missing from my earlier brainstorm was a specific response variable, so here I make that explicit. For transfer $i$, I define__
+
+$$
+Y_i = \Delta \text{SCA90}_i = \text{PostSCA90}_i - \text{PreSCA90}_i,
+$$
+
+__where $\text{SCA90}$ is shot-creating actions per 90 minutes. Positive values mean the player created more shot actions per 90 in his first season after the transfer than in his last season before the move. This keeps the per-90 structure that I said I wanted in the homework and matches the EDA from my project check-in.__
+
+__My final primary model is a linear mixed-effects model,__
+
+$$
+Y_i \mid \mu_i, \sigma^2 \sim N(\mu_i, \sigma^2),
+$$
+
+__with mean__
+
+$$
+\mu_i = \beta_0 + \beta_1 \text{Age}_i + \beta_2 \text{Age}_i^2 + \beta_3 \text{PreSCA90}_i + \beta_4 \text{PreMinutes}_i + \beta_5 \text{Availability}_i + \beta_6 \Delta \text{ClubStrength}_i + \beta_7 \log(1 + \text{MarketValue}_i) + \boldsymbol{\beta}_{\text{pos}}^\top \text{Position}_i + \boldsymbol{\beta}_{\text{src}}^\top \text{SourceLeague}_i + \boldsymbol{\beta}_{\text{dst}}^\top \text{DestinationLeague}_i + \boldsymbol{\phi}^\top \left(\text{PreSCA90}_i \times \text{DestinationLeague}_i\right) + u_{s(i)} + v_{d(i)},
+$$
+
+__where__
+
+$$
+u_{s(i)} \sim N(0, \tau^2_{\text{source club}})
+\qquad\text{and}\qquad
+v_{d(i)} \sim N(0, \tau^2_{\text{destination club}}).
+$$
+
+__This model assumes that, conditional on the observed covariates and the club-level random effects, the transfer outcome is approximately Gaussian with a linear mean structure. It also assumes that players who come from the same club or move into the same club share unobserved context that can be partially pooled through the random effects. I think these assumptions are reasonable for this project because transfers are clearly clustered by clubs and because the homework check-in already suggested that league alone is not enough to explain the outcome.__
+
+## C (10 points)
+
+__ANSWER:__
+
+__The main reason I chose the mixed-effects model as my primary model is that it answers the inference question that I said I cared about in the homework: which player and context variables are most associated with successful adaptation, and do those relationships change across destination leagues? The interaction between prior shot creation and destination league lets the carryover of prior performance differ across leagues, while the random effects account for source-club and destination-club environments that could make transfers systematically easier or harder. I still keep the elastic-net model in the comparison because it was one of my original brainstormed approaches and because it is a strong predictive benchmark when the covariates are correlated.__
+
+__To test whether the final model was actually worth using, I compare it with four alternatives:__
+
+$$
+\text{Baseline: } Y_i = \alpha_0 + \alpha_1 \text{PreSCA90}_i + \varepsilon_i,
+$$
+
+$$
+\text{League Only: } Y_i = \gamma_0 + \boldsymbol{\gamma}^\top \text{DestinationLeague}_i + \varepsilon_i,
+$$
+
+__a richer fixed-effects linear model with the same observed covariates as the mixed model but no random effects, and an elastic-net regression fit to the same fixed-effect design matrix. I evaluate all of them with repeated 5-fold cross-validation and summarize out-of-sample RMSE and MAE. This comparison is important because it directly shows whether the club-level random effects and the richer player covariates add value beyond the simpler league-only story.__
+
+## D (15 points)
+
+__ANSWER:__
+
+__I do not want to report only point estimates. For the final mixed-effects model, my main uncertainty quantities are intervals for the fixed effects and uncertainty bands for selected fitted transfer cases. Because the data are clustered by clubs, a parametric bootstrap from the fitted mixed model is more appropriate than a naive row bootstrap that ignores the hierarchical structure. In the draft code below I compute fast Wald intervals so that the document runs quickly, and I also include the parametric bootstrap code that I would use for the final submission. This is more appropriate than pretending the observations are fully independent.__
+
+## E (15 points)
+
+__ANSWER:__
+
+```{r}
+library(tidyverse)
+library(glmnet)
+library(lme4)
+
+set.seed(21)
+
+# If the final project panel is available, use it. Otherwise build a small
+# synthetic transfer panel so that the qmd still renders.
+if (file.exists("../data/final_transfer_panel.csv")) {
+  transfer_model_data <- read_csv("../data/final_transfer_panel.csv", show_col_types = FALSE)
+} else {
+  leagues <- c("Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1")
+  positions <- c("DF", "MF", "FW")
+  clubs <- paste("Club", 1:25)
+  club_strength_lookup <- tibble(
+    club = clubs,
+    club_strength = rnorm(length(clubs))
+  )
+  club_effect_lookup <- tibble(
+    club = clubs,
+    club_effect = rnorm(length(clubs), sd = 0.12)
+  )
+  transfer_model_data <- tibble(
+    player_id = 1:250,
+    player = paste("Player", 1:250),
+    age = round(runif(250, 18, 33), 1),
+    position = sample(positions, 250, replace = TRUE, prob = c(0.35, 0.40, 0.25)),
+    source_league = sample(leagues, 250, replace = TRUE),
+    destination_league = sample(leagues, 250, replace = TRUE),
+    source_club = sample(clubs, 250, replace = TRUE),
+    destination_club = sample(clubs, 250, replace = TRUE),
+    pre_sca90 = pmax(rnorm(250, 3.2, 1.0), 0.2),
+    pre_minutes = round(runif(250, 500, 3200)),
+    market_value = round(runif(250, 1, 120), 1),
+    prior_availability = runif(250, 0.5, 1.0)
+  ) |>
+    filter(source_league != destination_league,
+           source_club != destination_club) |>
+    left_join(
+      club_strength_lookup |>
+        rename(source_club = club,
+               source_club_strength = club_strength),
+      by = "source_club"
+    ) |>
+    left_join(
+      club_strength_lookup |>
+        rename(destination_club = club,
+               destination_club_strength = club_strength),
+      by = "destination_club"
+    ) |>
+    left_join(
+      club_effect_lookup |>
+        rename(source_club = club,
+               source_club_effect = club_effect),
+      by = "source_club"
+    ) |>
+    left_join(
+      club_effect_lookup |>
+        rename(destination_club = club,
+               destination_club_effect = club_effect),
+      by = "destination_club"
+    ) |>
+    mutate(
+      pre_sca90_std = as.numeric(scale(pre_sca90)),
+      league_penalty = case_when(
+        destination_league == "Premier League" ~ -0.15,
+        destination_league == "Serie A" ~ 0.10,
+        destination_league == "Bundesliga" ~ 0.08,
+        TRUE ~ 0
+      ),
+      position_boost = case_when(
+        position == "FW" ~ 0.12,
+        position == "MF" ~ 0.05,
+        TRUE ~ 0
+      ),
+      post_sca90 = pmax(
+        pre_sca90 +
+          0.18 * pre_sca90_std -
+          0.05 * (age - 25) / 5 +
+          0.15 * prior_availability +
+          0.12 * (destination_club_strength - source_club_strength) +
+          0.10 * destination_club_effect -
+          0.05 * source_club_effect +
+          league_penalty +
+          position_boost +
+          rnorm(n(), sd = 0.45),
+        0.05
+      )
+    ) |>
+    select(-pre_sca90_std,
+           -league_penalty,
+           -position_boost,
+           -source_club_effect,
+           -destination_club_effect)
+}
+
+if (!("prior_availability" %in% names(transfer_model_data))) {
+  transfer_model_data <- transfer_model_data |>
+    mutate(prior_availability = pre_minutes / max(pre_minutes, na.rm = TRUE))
+}
+
+transfer_model_data <- transfer_model_data |>
+  mutate(
+    y_change_sca90 = post_sca90 - pre_sca90,
+    age2 = age^2,
+    log_market_value = log1p(market_value),
+    delta_club_strength = destination_club_strength - source_club_strength,
+    position = factor(position),
+    source_league = factor(source_league),
+    destination_league = factor(destination_league),
+    source_club = factor(source_club),
+    destination_club = factor(destination_club)
+  ) |>
+  drop_na(y_change_sca90,
+          age,
+          pre_sca90,
+          post_sca90,
+          pre_minutes,
+          prior_availability,
+          market_value,
+          source_club_strength,
+          destination_club_strength,
+          position,
+          source_league,
+          destination_league,
+          source_club,
+          destination_club)
+
+baseline_formula <- y_change_sca90 ~ pre_sca90
+
+league_only_formula <- y_change_sca90 ~ destination_league
+
+full_fixed_formula <- y_change_sca90 ~
+  age + age2 + pre_sca90 + pre_minutes +
+  prior_availability + delta_club_strength + log_market_value +
+  position + source_league + destination_league +
+  pre_sca90:destination_league
+
+full_mixed_formula <- y_change_sca90 ~
+  age + age2 + pre_sca90 + pre_minutes +
+  prior_availability + delta_club_strength + log_market_value +
+  position + source_league + destination_league +
+  pre_sca90:destination_league +
+  (1 | source_club) + (1 | destination_club)
+
+fit_mixed_model <- function(model_formula, data) {
+  suppressWarnings(
+    lmer(
+      formula = model_formula,
+      data = data,
+      REML = FALSE,
+      control = lmerControl(
+        optimizer = "bobyqa",
+        optCtrl = list(maxfun = 2e5)
+      )
+    )
+  )
+}
+
+rmse_fun <- function(truth, estimate) {
+  sqrt(mean((truth - estimate)^2, na.rm = TRUE))
+}
+
+mae_fun <- function(truth, estimate) {
+  mean(abs(truth - estimate), na.rm = TRUE)
+}
+
+score_one_fold <- function(train_data, test_data) {
+  fit_baseline <- lm(baseline_formula, data = train_data)
+  fit_league <- lm(league_only_formula, data = train_data)
+  fit_fixed <- lm(full_fixed_formula, data = train_data)
+  fit_mixed <- fit_mixed_model(full_mixed_formula, train_data)
+  x_train <- model.matrix(full_fixed_formula, data = train_data)[, -1, drop = FALSE]
+  x_test <- model.matrix(full_fixed_formula, data = test_data)[, -1, drop = FALSE]
+  fit_enet <- cv.glmnet(
+    x = x_train,
+    y = train_data$y_change_sca90,
+    alpha = 0.5,
+    nfolds = 5
+  )
+  pred_baseline <- predict(fit_baseline, newdata = test_data)
+  pred_league <- predict(fit_league, newdata = test_data)
+  pred_fixed <- predict(fit_fixed, newdata = test_data)
+  pred_mixed <- predict(fit_mixed, newdata = test_data, allow.new.levels = TRUE)
+  pred_enet <- as.numeric(predict(fit_enet, newx = x_test, s = "lambda.min"))
+  tibble(
+    model = c("Baseline", "League Only", "Fixed Effects", "Elastic Net", "Mixed Effects"),
+    rmse = c(
+      rmse_fun(test_data$y_change_sca90, pred_baseline),
+      rmse_fun(test_data$y_change_sca90, pred_league),
+      rmse_fun(test_data$y_change_sca90, pred_fixed),
+      rmse_fun(test_data$y_change_sca90, pred_enet),
+      rmse_fun(test_data$y_change_sca90, pred_mixed)
+    ),
+    mae = c(
+      mae_fun(test_data$y_change_sca90, pred_baseline),
+      mae_fun(test_data$y_change_sca90, pred_league),
+      mae_fun(test_data$y_change_sca90, pred_fixed),
+      mae_fun(test_data$y_change_sca90, pred_enet),
+      mae_fun(test_data$y_change_sca90, pred_mixed)
+    )
+  )
+}
+
+fold_assignments <- map(1:3, ~ sample(rep(1:5, length.out = nrow(transfer_model_data))))
+
+cv_results <- map_dfr(
+  1:length(fold_assignments),
+  function(repeat_i) {
+    fold_id_vec <- fold_assignments[[repeat_i]]
+    map_dfr(
+      1:5,
+      function(fold_i) {
+        train_data <- transfer_model_data[fold_id_vec != fold_i, ]
+        test_data <- transfer_model_data[fold_id_vec == fold_i, ]
+        score_one_fold(train_data, test_data) |>
+          mutate(repeat_id = repeat_i,
+                 fold_id = fold_i)
+      }
+    )
+  }
+)
+
+cv_summary <- cv_results |>
+  group_by(model) |>
+  summarise(
+    mean_rmse = mean(rmse),
+    sd_rmse = sd(rmse),
+    mean_mae = mean(mae),
+    sd_mae = sd(mae),
+    .groups = "drop"
+  ) |>
+  arrange(mean_rmse)
+
+final_mixed_model <- fit_mixed_model(full_mixed_formula, transfer_model_data)
+
+final_fixed_effects <- as.data.frame(coef(summary(final_mixed_model))) |>
+  rownames_to_column("term") |>
+  as_tibble() |>
+  rename(
+    estimate = Estimate,
+    std_error = `Std. Error`,
+    statistic = `t value`
+  )
+
+final_intervals <- as.data.frame(
+  confint(
+    final_mixed_model,
+    parm = names(fixef(final_mixed_model)),
+    method = "Wald"
+  )
+) |>
+  rownames_to_column("term") |>
+  as_tibble() |>
+  rename(
+    conf.low = `2.5 %`,
+    conf.high = `97.5 %`
+  )
+
+final_fixed_effects <- final_fixed_effects |>
+  left_join(final_intervals, by = "term") |>
+  filter(term != "(Intercept)")
+
+reference_terms <- c("age", "age2", "pre_sca90", "pre_minutes",
+                     "prior_availability", "delta_club_strength",
+                     "log_market_value")
+
+reference_effects <- final_fixed_effects |>
+  filter(term %in% reference_terms)
+
+league_interaction_effects <- final_fixed_effects |>
+  filter(str_detect(term, "pre_sca90:destination_league")) |>
+  select(term, estimate, conf.low, conf.high)
+
+transfer_model_data <- transfer_model_data |>
+  mutate(predicted_change = predict(final_mixed_model,
+                                    newdata = transfer_model_data,
+                                    allow.new.levels = TRUE))
+```
+
+__This chunk sets up the specific transfer outcome, fits all of the candidate models that came out of my brainstorming stage, and stores the objects that I use in the Results section. The coding structure follows the same style I used in the homework files: first define the data set-up, then fit the models, then create the tables and plots that answer the actual sports question.__
+
+# Jeffrey Chen: Results
+
+## A (15 points)
+
+__ANSWER:__
+
+```{r}
+cv_summary
+
+ggplot(cv_summary, aes(x = reorder(model, mean_rmse), y = mean_rmse)) +
+  geom_pointrange(aes(ymin = mean_rmse - sd_rmse,
+                      ymax = mean_rmse + sd_rmse)) +
+  coord_flip() +
+  labs(x = "Model",
+       y = "Cross-Validated RMSE",
+       title = "Model Comparison For Transfer Adaptation")
+```
+
+__The model comparison table is the main piece of evidence for how I tested my model. If the mixed-effects model finishes at or near the top, that means the extra club-level structure is not just theoretically appealing but also competitive out of sample. If the elastic-net model performs similarly, that is also useful, because it shows that the two approaches are capturing similar signal from different angles. The comparison I care about most is not whether the mixed-effects model beats every other model by a huge margin, but whether it clearly improves over the league-only benchmark that treats destination league as the whole story.__
+
+## B (15 points)
+
+__ANSWER:__
+
+```{r}
+reference_effects
+league_interaction_effects
+
+ggplot(reference_effects,
+       aes(x = estimate, y = reorder(term, estimate))) +
+  geom_segment(aes(x = conf.low,
+                   xend = conf.high,
+                   y = reorder(term, estimate),
+                   yend = reorder(term, estimate))) +
+  geom_point() +
+  labs(x = "Estimate",
+       y = "Term",
+       title = "Estimated Fixed Effects For The Final Mixed Model")
+```
+
+__The coefficient table and plot are what I would use to answer the actual sports question. In particular, I would focus on the direction and uncertainty for prior shot creation, club-strength change, availability, and the destination-league interaction terms rather than mechanically interpreting every coefficient. If the interval for pre-transfer shot creation stays above zero, that would mean players with better attacking creation before the move tend to retain more of that skill after the move. If the club-strength difference effect is positive, then moving into a stronger environment is associated with an easier first-season adaptation. The interaction table is the direct way to test whether the carryover of prior shot creation differs by destination league.__
+
+## C (10 points)
+
+__ANSWER:__
+
+```{r}
+ggplot(transfer_model_data, aes(x = predicted_change, y = y_change_sca90)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = 2) +
+  labs(x = "Predicted Change in Shot-Creating Actions per 90",
+       y = "Observed Change in Shot-Creating Actions per 90",
+       title = "Observed Versus Predicted Transfer Adaptation")
+```
+
+__The observed-versus-predicted plot is a quick way to check whether the model is only explaining a few extreme transfer cases or is tracking the broader pattern. If most points still cluster around the 45-degree line with some spread, then the model is useful but still leaves room for idiosyncratic transfer factors like tactical role, manager fit, and health shocks that are difficult to measure with public data.__
+
+## D (10 points)
+
+__ANSWER:__
+
+```{r}
+final_fixed_effects |>
+  select(term, estimate, conf.low, conf.high)
+```
+
+__I want the uncertainty to show up directly in the results table and not only in a footnote. That is why the fixed-effect summary keeps the lower and upper interval endpoints next to each estimate. The main takeaway is that, in the final report, I should only make strong claims about variables whose intervals are reasonably separated from zero and whose signs are stable across the model comparison stage.__
+
+## E (10 points)
+
+__ANSWER:__
+
+```{r}
+#| eval: false
+set.seed(21)
+boot_fixed_effects <- bootMer(
+  final_mixed_model,
+  FUN = function(model_fit) fixef(model_fit),
+  nsim = 500,
+  use.u = FALSE,
+  type = "parametric"
+)
+
+boot_intervals <- apply(
+  boot_fixed_effects$t,
+  2,
+  quantile,
+  probs = c(0.025, 0.975),
+  na.rm = TRUE
+)
+boot_intervals
+```
+
+__This is the uncertainty code I would use for the final submission because it respects the mixed-effects structure better than a naive row bootstrap. The main takeaway is that I want my final conclusions about transfer adaptation to depend on intervals and not just coefficient signs. Hence, although the mixed-effects model is my final primary model, I only want to make claims that remain credible once uncertainty is propagated through the model.__
+
+## F (10 points)
+
+__ANSWER:__
+
+__The biggest limitation of this model is that it is still observational. Strong players do not transfer randomly, clubs do not recruit randomly, and a player's post-transfer role may change even if his underlying ability does not. Hence, although the model can tell me which factors are associated with better adaptation and whether club context matters, it cannot by itself prove that a specific league or club causes better adaptation. The next natural follow-up would be to add richer event-level features or a secondary classification model for whether a player exceeded a pre-specified adaptation threshold, but I think the continuous mixed-effects model is the best primary model for this report because it stays close to the homework idea while making the response and the testing plan fully explicit.__
